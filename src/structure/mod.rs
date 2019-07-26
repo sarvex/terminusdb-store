@@ -6,3 +6,4 @@ pub mod pfc;
 pub mod bitindex;
 pub mod adjacencylist;
 pub mod storage;
+pub mod wavelettree;

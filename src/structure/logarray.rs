@@ -397,6 +397,12 @@ pub fn open_logarray_stream<F:'static+FileLoad>(f: F) -> impl Future<Item=Box<'s
         })
 }
 
+pub fn logarray_file_get_width<F:'static+FileLoad>(f: F) -> impl Future<Item=u8,Error=std::io::Error> {
+    let end_offset = f.size() - 8;
+    tokio::io::read_exact(f.open_read_from(end_offset), vec![0;8])
+        .map(move |(_,buf)| buf[4])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
