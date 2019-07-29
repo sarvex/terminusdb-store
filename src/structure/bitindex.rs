@@ -188,7 +188,7 @@ impl<'a> BitIndex<'a> {
                 break;
             }
 
-            let r = (SBLOCK_SIZE - mid) as u64 * 64 - self.blocks.entry(mid);
+            let r = (SBLOCK_SIZE - mid%SBLOCK_SIZE) as u64 * 64 - self.blocks.entry(mid);
             match r > subrank {
                 true => start = mid,
                 false => end = mid - 1
@@ -200,10 +200,9 @@ impl<'a> BitIndex<'a> {
 
     pub fn select0(&self, rank: u64) -> u64 {
         let sblock = self.select0_sblock(rank);
-        let sblock_rank = self.sblocks.entry(sblock);
+        let sblock_rank = ((1+sblock)*SBLOCK_SIZE*64) as u64 - self.sblocks.entry(sblock);
         let block = self.select0_block(sblock, sblock_rank - rank);
-        let block_subrank = (1+block as u64)*64 - self.blocks.entry(block);
-        println!("{} {} {} {}", rank, sblock_rank, block_subrank, block);
+        let block_subrank = (SBLOCK_SIZE-block%SBLOCK_SIZE) as u64 *64 - self.blocks.entry(block);
         let rank_in_block = rank - (sblock_rank - block_subrank);
         assert!(rank_in_block <= 64);
         let bits = self.block_bits(block);
@@ -317,9 +316,8 @@ mod tests {
             assert_eq!(1+i - (i/3 + 1), index.rank0(i));
         }
 
-        for i in 1..25 {
-            println!("{}", i);
-            assert_eq!((i-1)*3,index.select0(i));
+        for i in 1..(123456*2/3) {
+            assert_eq!(i + (i - 1) / 2,index.select0(i));
         }
     }
 }
