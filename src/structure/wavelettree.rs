@@ -25,7 +25,7 @@ impl<'a> WaveletTree<'a> {
 
         let mut last_rank = 0;
         for i in 1..=num_layers {
-            let rank = bits.rank((i*layer_width) as u64);
+            let rank = bits.rank0((i*layer_width) as u64);
             layer_ranks.push(rank - last_rank);
             last_rank = rank;
         }
@@ -33,12 +33,30 @@ impl<'a> WaveletTree<'a> {
         WaveletTree { bits, layer_ranks }
     }
 
+    pub fn length(&self) -> usize {
+        self.bits.len() / self.layer_ranks.len()
+    }
 
     pub fn decode(&self) -> impl Iterator<Item=u64> {
         self.decode_from(0)
     }
 
     pub fn decode_one(&self, index: usize) -> u64 {
+        /*
+        let len = self.length();
+        let mut offset = index;
+        let mut range_start = 0;
+        let mut range_end = 2_u64.pow(self.layer_ranks.len() as u32) as usize;
+        for i in 0..self.layer_ranks.length() {
+            let rank = self.layer_ranks[i];
+            let entry = self.bits.get(offset + i*len);
+
+            if entry {
+                // we found a 1. let's figure out the rank
+            }
+        }
+        self.bits.rank(self.length())
+            */
         self.decode_from(index).nth(0).unwrap()
     }
 
@@ -81,4 +99,8 @@ pub fn build_wavelet_tree<FLoad: 'static+FileLoad+Clone, F1: 'static+FileLoad+Fi
                   .and_then(|b| b.finalize())
                   .and_then(move |_| build_bitindex(destination_bits.open_read(), destination_blocks.open_write(), destination_sblocks.open_write()))
                   .map(|_|()))
+}
+
+#[cfg(test)]
+mod tests {
 }

@@ -31,8 +31,8 @@ impl<'a> AdjacencyList<'a> {
             panic!("minimum index has to be 1");
         }
 
-        let start = if index == 1 { 0 } else { self.bits.select(index-1)+1 };
-        let end = self.bits.select(index);
+        let start = if index == 1 { 0 } else { self.bits.select1(index-1)+1 };
+        let end = self.bits.select1(index);
         let length = end - start + 1;
 
         self.nums.slice(start as usize, length as usize)

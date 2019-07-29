@@ -42,7 +42,7 @@ impl<'a> BitIndex<'a> {
         self.array.get(index as usize)
     }
 
-    pub fn rank(&self, index: u64) -> u64 {
+    pub fn rank1(&self, index: u64) -> u64 {
         let block_index = index / 64;
         let sblock_index = block_index / SBLOCK_SIZE as u64;
 
@@ -58,7 +58,7 @@ impl<'a> BitIndex<'a> {
         sblock_rank - block_rank + bits_rank
     }
 
-    fn select_sblock(&self, rank: u64) -> usize {
+    fn select1_sblock(&self, rank: u64) -> usize {
         let mut start = 0;
         let mut end = self.sblocks.len()-1;
         let mut mid;
@@ -80,7 +80,7 @@ impl<'a> BitIndex<'a> {
         mid
     }
 
-    fn select_block(&self, sblock: usize, subrank: u64) -> usize {
+    fn select1_block(&self, sblock: usize, subrank: u64) -> usize {
         let mut start = sblock * SBLOCK_SIZE;
         let mut end = start + SBLOCK_SIZE-1;
         if end > self.blocks.len() - 1 {
@@ -112,10 +112,10 @@ impl<'a> BitIndex<'a> {
         mid
     }
 
-    pub fn select(&self, rank: u64) -> u64 {
-        let sblock = self.select_sblock(rank);
+    pub fn select1(&self, rank: u64) -> u64 {
+        let sblock = self.select1_sblock(rank);
         let sblock_rank = self.sblocks.entry(sblock);
-        let block = self.select_block(sblock, sblock_rank - rank);
+        let block = self.select1_block(sblock, sblock_rank - rank);
         let block_subrank = self.blocks.entry(block);
         let rank_in_block = rank - (sblock_rank - block_subrank);
         assert!(rank_in_block <= 64);
@@ -125,6 +125,93 @@ impl<'a> BitIndex<'a> {
         let mut tally = rank_in_block;
         for i in 0..64 {
             if bits_num & 0x8000000000000000 != 0 {
+                tally -= 1;
+
+                if tally == 0 {
+                    return block as u64 * 64 + i;
+                }
+            }
+
+            bits_num <<= 1;
+        }
+
+        panic!("reached end of select function without a result");
+    }
+
+    pub fn rank0(&self, index: u64) -> u64 {
+        let r0 = self.rank1(index);
+        1+index - r0
+    }
+
+    fn select0_sblock(&self, rank: u64) -> usize {
+        let mut start = 0;
+        let mut end = self.sblocks.len()-1;
+        let mut mid;
+
+
+        loop {
+            mid = (start + end)/2;
+            if start == end {
+                break;
+            }
+
+            let r = ((1+mid) * SBLOCK_SIZE) as u64 * 64 - self.sblocks.entry(mid);
+            match r < rank {
+                true => start = mid + 1,
+                false => end = mid
+            }
+        }
+
+        mid
+    }
+
+    fn select0_block(&self, sblock: usize, subrank: u64) -> usize {
+        let mut start = sblock * SBLOCK_SIZE;
+        let mut end = start + SBLOCK_SIZE-1;
+        if end > self.blocks.len() - 1 {
+            end = self.blocks.len() - 1;
+        }
+
+        let mut mid;
+
+        // inside a superblock, block subranks cache superblock_rank - sum_i<block_(blockrank_i).
+        // Or another way to think of this, each block subrank specifies where in the superblock
+        // this block starts. if a superblock has a rank of 1000, and the first block has a rank of 50,
+        // the second block will have a subrank of 1000-50=950.
+        // Suppose the second block has a rank of 20, then the third block will have a subrank of 950-20=930.
+        //
+        // To find the proper block, we're trying to find the rightmost block with a subrank greater than the
+        // subrank we're looking for.
+        loop {
+            mid = (start + end + 1)/2;
+            if start == end {
+                break;
+            }
+
+            let r = (SBLOCK_SIZE - mid) as u64 * 64 - self.blocks.entry(mid);
+            match r > subrank {
+                true => start = mid,
+                false => end = mid - 1
+            }
+        }
+
+        mid
+    }
+
+    pub fn select0(&self, rank: u64) -> u64 {
+        let sblock = self.select0_sblock(rank);
+        let sblock_rank = self.sblocks.entry(sblock);
+        let block = self.select0_block(sblock, sblock_rank - rank);
+        let block_subrank = (1+block as u64)*64 - self.blocks.entry(block);
+        println!("{} {} {} {}", rank, sblock_rank, block_subrank, block);
+        let rank_in_block = rank - (sblock_rank - block_subrank);
+        assert!(rank_in_block <= 64);
+        let bits = self.block_bits(block);
+
+        let mut bits_num = BigEndian::read_u64(bits);
+        let mut tally = rank_in_block;
+        for i in 0..64 {
+            if bits_num & 0x8000000000000000 == 0 {
                 tally -= 1;
 
                 if tally == 0 {
@@ -170,7 +257,7 @@ mod tests {
     use tokio_io::io::AllowStdIo;
     use std::io::Cursor;
     #[test]
-    pub fn rank_and_select_work() {
+    pub fn rank1_and_select1_work() {
         let ba_builder = BitArrayFileBuilder::new(AllowStdIo::new(Vec::new()));
         let contents = (0..).map(|n| n % 3 == 0).take(123456);
         let ba_stored = ba_builder.push_all(stream::iter_ok(contents))
@@ -194,12 +281,45 @@ mod tests {
         let index = BitIndex::from_parts(ba, blocks_logarray, sblocks_logarray);
 
         for i in 0..123456 {
-            assert_eq!(i/3 + 1, index.rank(i));
+            assert_eq!(i/3 + 1, index.rank1(i));
         }
 
         for i in 1..(123456/3) {
-            assert_eq!((i-1)*3,index.select(i));
+            assert_eq!((i-1)*3,index.select1(i));
+        }
+    }
+
+    #[test]
+    pub fn rank0_and_select0_work() {
+        let ba_builder = BitArrayFileBuilder::new(AllowStdIo::new(Vec::new()));
+        let contents = (0..).map(|n| n % 3 == 0).take(123456);
+        let ba_stored = ba_builder.push_all(stream::iter_ok(contents))
+            .and_then(|b|b.finalize())
+            .wait()
+            .unwrap()
+            .into_inner();
+
+        let c = Cursor::new(ba_stored.clone());
+        let index_blocks = AllowStdIo::new(Vec::new());
+        let index_sblocks = AllowStdIo::new(Vec::new());
+        let (blocks, sblocks) = build_bitindex(c, index_blocks, index_sblocks)
+            .map(|(b,s)|(b.into_inner(),s.into_inner()))
+            .wait()
+            .unwrap();
+
+        let ba = BitArray::from_bits(&ba_stored);
+        let blocks_logarray = LogArray::parse(&blocks).unwrap();
+        let sblocks_logarray = LogArray::parse(&sblocks).unwrap();
+
+        let index = BitIndex::from_parts(ba, blocks_logarray, sblocks_logarray);
+
+        for i in 0..123456 {
+            assert_eq!(1+i - (i/3 + 1), index.rank0(i));
         }
 
+        for i in 1..25 {
+            println!("{}", i);
+            assert_eq!((i-1)*3,index.select0(i));
+        }
     }
 }
