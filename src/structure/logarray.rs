@@ -115,7 +115,6 @@ impl<'a> LogArray<'a> {
     }
 
     pub fn slice(&self, offset: usize, length: usize) -> LogArraySlice {
-        println!("self length: {} offset {} length {}", self.len(), offset, length);
         if self.len() < offset + length {
             panic!("slice out of bounds");
         }
@@ -336,7 +335,6 @@ impl Decoder for LogArrayDecoder {
     type Error = std::io::Error;
 
     fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<u64>, std::io::Error> {
-        println!("logarraydecoder: {:?}", self);
         if self.remaining == 0 {
             // we're out of things to read. All that remains is the footer with the length and things.
             bytes.clear();
