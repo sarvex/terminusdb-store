@@ -16,6 +16,7 @@ pub struct WaveletTree<'a> {
 
 impl<'a> WaveletTree<'a> {
     pub fn from_parts(bits: BitIndex<'a>, num_layers: usize) -> WaveletTree<'a> {
+        assert!(num_layers != 0);
         if bits.len() % num_layers != 0 {
             panic!("the bitarray length is not a multiple of the number of layers");
         }
@@ -82,6 +83,48 @@ impl<'a> WaveletTree<'a> {
         alphabet_start
 
         //self.decode_from(index).nth(0).unwrap()
+    }
+
+    pub fn lookup(&self, query: u64) -> impl Iterator<Item=usize> {
+        /*
+        let mut range_start = 0 as u64;
+        let mut range_end = self.len() as u64;
+
+        let max = 2_u64.pow(self.num_layers as u32);
+        
+        if max <= query {
+            panic!("wavelet lookup out of range");
+        }
+
+        let mut mid = max;
+        let len = self.len() as u64;
+
+        let mut address = Vec::with_capacity(self.num_layers);
+        for i in 0..self.num_layers as u64 {
+            mid >>= 1;
+            address.push((range_start, range_end, query < mid));
+            if query < mid {
+                // section is part of 0's
+                let rank1_prev_end = if range_start == 0 {0} else {self.bits.rank1(range_start-1)};
+                let ones_in_range = self.bits.rank1(i*len+range_end-1) - rank1_prev_end;
+
+                range_end -= ones_in_range;
+            }
+            else {
+                // section is part of 1's
+                let rank0_prev_end = if range_start == 0 {0} else {self.bits.rank0(range_start-1)};
+                let zeros_in_range = self.bits.rank0(i*len+range_end-1) - rank0_prev_end;
+
+                range_start += zeros_in_range;
+            }
+        }
+
+        println!("range is {} {}", range_start, range_end);
+
+        (range_start.range_end)
+            .map(|i| address.iter().fold(
+        */
+        vec![0].into_iter()
     }
 }
 
