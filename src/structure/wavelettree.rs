@@ -48,32 +48,24 @@ impl<'a> WaveletTree<'a> {
         for i in 0..self.num_layers as u64 {
             let index = i*len + range_start + offset;
             if index as usize >= self.bits.len() {
-                panic!("wtf");
+                panic!("inner loop reached an index that is too high");
             }
             let bit = self.bits.get(index);
 
-            // this is wrong
-            // offset is calculated bad
             let range_start_index = i * len + range_start;
+            let range_end_index = i * len + range_end;
             if bit {
                 alphabet_start = (alphabet_start+alphabet_end) / 2;
-                let rank1_start = self.bits.rank1(range_start_index);
-                let rank1_start_bit = self.bits.get(range_start_index);
+                offset = self.bits.rank1_range(range_start_index, index+1) - 1;
 
-                let rank0_prev_end = if range_start_index == 0 {0} else {self.bits.rank0(range_start_index-1)};
-                let zeros_in_range = self.bits.rank0(i*len+range_end-1) - rank0_prev_end;
-
-                offset = self.bits.rank1(index) - rank1_start - if rank1_start_bit { 0 } else { 1 };
+                let zeros_in_range = self.bits.rank0_range(range_start_index, range_end_index);
                 range_start += zeros_in_range;
             }
             else {
                 alphabet_end = (alphabet_start+alphabet_end) / 2;
-                let rank0_start = self.bits.rank0(range_start_index);
-                let rank0_start_bit = self.bits.get(range_start_index);
-                let rank1_prev_end = if range_start_index == 0 {0} else {self.bits.rank1(range_start_index-1)};
-                let ones_in_range = self.bits.rank1(i*len+range_end-1) - rank1_prev_end;
+                offset = self.bits.rank0_range(range_start_index, index+1) - 1;
 
-                offset = self.bits.rank0(index) - rank0_start - if rank0_start_bit { 1 } else { 0 };
+                let ones_in_range = self.bits.rank1_range(range_start_index, range_end_index);
                 range_end -= ones_in_range;
             }
         }

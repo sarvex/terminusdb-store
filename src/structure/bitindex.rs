@@ -58,6 +58,15 @@ impl<'a> BitIndex<'a> {
         sblock_rank - block_rank + bits_rank
     }
 
+    pub fn rank1_range(&self, start: u64, end: u64) -> u64 {
+        let mut rank = self.rank1(end-1);
+        if start != 0 {
+            rank -= self.rank1(start-1);
+        }
+
+        rank
+    }
+
     fn select1_sblock(&self, rank: u64) -> usize {
         let mut start = 0;
         let mut end = self.sblocks.len()-1;
@@ -141,6 +150,15 @@ impl<'a> BitIndex<'a> {
     pub fn rank0(&self, index: u64) -> u64 {
         let r0 = self.rank1(index);
         1+index - r0
+    }
+
+    pub fn rank0_range(&self, start: u64, end: u64) -> u64 {
+        let mut rank = self.rank0(end-1);
+        if start != 0 {
+            rank -= self.rank0(start-1);
+        }
+
+        rank
     }
 
     fn select0_sblock(&self, rank: u64) -> usize {
