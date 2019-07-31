@@ -73,12 +73,9 @@ impl<'a> WaveletTree<'a> {
         assert!(alphabet_start == alphabet_end - 1);
 
         alphabet_start
-
-        //self.decode_from(index).nth(0).unwrap()
     }
 
     pub fn lookup(&self, query: u64) -> impl Iterator<Item=usize> {
-        /*
         let mut range_start = 0 as u64;
         let mut range_end = self.len() as u64;
 
@@ -88,34 +85,36 @@ impl<'a> WaveletTree<'a> {
             panic!("wavelet lookup out of range");
         }
 
-        let mut mid = max;
+        let mut mid = max>>1;
         let len = self.len() as u64;
 
         let mut address = Vec::with_capacity(self.num_layers);
         for i in 0..self.num_layers as u64 {
-            mid >>= 1;
-            address.push((range_start, range_end, query < mid));
+            address.push((range_start, range_end, query >= mid));
             if query < mid {
                 // section is part of 0's
-                let rank1_prev_end = if range_start == 0 {0} else {self.bits.rank1(range_start-1)};
-                let ones_in_range = self.bits.rank1(i*len+range_end-1) - rank1_prev_end;
+                let ones_in_range = self.bits.rank1_range(i*len + range_start, i*len + range_end);
 
                 range_end -= ones_in_range;
+                if i != self.num_layers as u64-1 {
+                    mid -= 2_u64.pow((self.num_layers as u64 - i - 2) as u32)
+                }
             }
             else {
                 // section is part of 1's
-                let rank0_prev_end = if range_start == 0 {0} else {self.bits.rank0(range_start-1)};
-                let zeros_in_range = self.bits.rank0(i*len+range_end-1) - rank0_prev_end;
+                let zeros_in_range = self.bits.rank0_range(i*len+ range_start, i*len + range_end);
 
                 range_start += zeros_in_range;
+                if i != self.num_layers as u64-1 {
+                    mid += 2_u64.pow((self.num_layers as u64 - i - 2) as u32)
+                }
             }
         }
 
-        println!("range is {} {}", range_start, range_end);
+        address.reverse();
 
-        (range_start.range_end)
-            .map(|i| address.iter().fold(
-        */
+        println!("{:?}", address);
+
         vec![0].into_iter()
     }
 }
@@ -188,5 +187,35 @@ mod tests {
         assert_eq!(contents_len, wavelet_tree.len());
 
         assert_eq!(contents, wavelet_tree.decode());
+    }
+
+    #[test]
+    fn wavelet_tree_lookup() {
+        let logarray_file = MemoryBackedStore::new();
+        let logarray_builder = LogArrayFileBuilder::new(logarray_file.open_write(), 5);
+        let contents = vec![21,1,30,13,23,21,3,0,21,21,12,11];
+        let contents_len = contents.len();
+        logarray_builder.push_all(stream::iter_ok(contents.clone()))
+            .and_then(|b|b.finalize())
+            .wait().unwrap();
+
+        let wavelet_bits_file = MemoryBackedStore::new();
+        let wavelet_blocks_file = MemoryBackedStore::new();
+        let wavelet_sblocks_file = MemoryBackedStore::new();
+
+        build_wavelet_tree(logarray_file, wavelet_bits_file.clone(), wavelet_blocks_file.clone(), wavelet_sblocks_file.clone())
+            .wait()
+            .unwrap();
+
+        let wavelet_bits = wavelet_bits_file.map();
+        let wavelet_blocks = wavelet_blocks_file.map();
+        let wavelet_sblocks = wavelet_sblocks_file.map();
+
+        let wavelet_bitindex = BitIndex::from_parts(BitArray::from_bits(&wavelet_bits), LogArray::parse(&wavelet_blocks).unwrap(), LogArray::parse(&wavelet_sblocks).unwrap());
+        let wavelet_tree = WaveletTree::from_parts(wavelet_bitindex, 5);
+
+        wavelet_tree.lookup(4);
+
+        panic!("oh no");
     }
 }
