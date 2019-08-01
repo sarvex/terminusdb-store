@@ -147,6 +147,13 @@ impl<'a> BitIndex<'a> {
         panic!("reached end of select function without a result");
     }
 
+    pub fn select1_from_range(&self, subrank: u64, start: u64, _end: u64) -> u64 {
+        // todo this is a dumb implementation. we can actually do a much faster select by making sblock/block lookup ranged. for now this will work.
+        let rank_offset = if start == 0 { 0 } else { self.rank1(start-1) };
+
+        self.select1(rank_offset + subrank)
+    }
+
     pub fn rank0(&self, index: u64) -> u64 {
         let r0 = self.rank1(index);
         1+index - r0
@@ -240,6 +247,13 @@ impl<'a> BitIndex<'a> {
         }
 
         panic!("reached end of select function without a result");
+    }
+
+    pub fn select0_from_range(&self, subrank: u64, start: u64, _end: u64) -> u64 {
+        // todo this is a dumb implementation. we can actually do a much faster select by making sblock/block lookup ranged. for now this will work.
+        let rank_offset = if start == 0 { 0 } else { self.rank0(start-1) };
+
+        self.select0(rank_offset + subrank)
     }
 }
 

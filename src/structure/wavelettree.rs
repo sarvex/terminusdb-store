@@ -112,6 +112,25 @@ impl<'a> WaveletTree<'a> {
         }
 
         address.reverse();
+        let a2 = address.clone();
+        (range_start, range_end, _) = address.pop(); // we don't actually need the last thing;
+        let address_combo = a2.zip(address)
+        if range_start == range_end {
+            // todo actually return empty iterator
+            panic!("oh no");
+        }
+
+        let num_layers = self.num_layers;
+        (0..(range_end-range_start)).map(move |i| {
+            let mut layer = num_layers;
+            let mut index_in_range = bottom_start + i;
+            // we need to consider the index in the bottom layer, then select for the subrank in range of the top layer.
+            for ((bottom_start, bottom_end, _), (top_start, top_end, b) in address_combo {
+                let index_in_range = layer * len + bottom_start + i;
+            }
+        })
+            .filter(|x|x.is_some())
+            .map(|x|x.unwrap())
 
         println!("{:?}", address);
 
