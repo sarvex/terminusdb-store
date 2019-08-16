@@ -5,6 +5,8 @@ use tokio::fs::*;
 use std::sync::{Arc,RwLock};
 use std::io::{self,Seek, SeekFrom};
 use std::path::PathBuf;
+use std::marker::PhantomData;
+use std::collections::HashMap;
 use memmap::*;
 
 pub trait FileStore {
@@ -181,6 +183,100 @@ impl FileStore for FileBackedStore {
         file.seek(SeekFrom::Start(offset as u64)).unwrap();
 
         File::from_std(file)
+    }
+}
+
+pub trait MultiFileStore {
+    type FileBackend: FileLoad+FileStore;
+
+    fn backend_for(&mut self, file: &str) -> Self::FileBackend;
+    fn backend_for_ro(&self, file: &str) -> Option<ReadOnlyFile<Self::FileBackend>>;
+}
+
+pub struct MemoryBackedMultiFileStore {
+    files: HashMap<String,MemoryBackedStore>
+}
+
+impl MultiFileStore for MemoryBackedMultiFileStore {
+    type FileBackend = MemoryBackedStore;
+
+    fn backend_for_ro(&self, file: &str) -> Option<ReadOnlyFile<MemoryBackedStore>> {
+        self.files.get(file).map(|f|ReadOnlyFile::new(f.clone()))
+    }
+
+    fn backend_for(&mut self, file: &str) -> MemoryBackedStore {
+        match self.files.get(file) {
+            None => {
+                let store = MemoryBackedStore::new();
+                self.files.insert(file.to_owned(), store.clone());
+
+                store
+            },
+            Some(f) => f.clone()
+        }
+    }
+}
+
+pub struct FileBackedMultiFileStore {
+    directory: PathBuf
+}
+
+impl FileBackedMultiFileStore {
+    pub fn new<P:Into<PathBuf>>(path: P) -> FileBackedMultiFileStore {
+        let p:PathBuf = path.into();
+        if !p.is_dir() {
+            panic!("tried to create a FileBackedMultiFileStore with a path that did not point at a directory");
+        }
+
+        FileBackedMultiFileStore { directory: p }
+    }
+}
+
+impl MultiFileStore for FileBackedMultiFileStore {
+    type FileBackend = FileBackedStore;
+
+    fn backend_for_ro(&self, file: &str) -> Option<ReadOnlyFile<FileBackedStore>> {
+        let mut full_path = self.directory.clone();
+        full_path.push(file);
+
+        match full_path.is_file() {
+            true => Some(ReadOnlyFile::new(FileBackedStore::new(full_path))),
+            false => None
+        }
+    }
+
+    fn backend_for(&mut self, file: &str) -> FileBackedStore {
+        let mut full_path = self.directory.clone();
+        full_path.push(file);
+
+        FileBackedStore::new(full_path)
+    }
+}
+
+pub struct ReadOnlyFile<T:FileLoad> {
+    file: T
+}
+
+impl<T:FileLoad> ReadOnlyFile<T> {
+    pub fn new(file: T) -> ReadOnlyFile<T> {
+        ReadOnlyFile { file }
+    }
+}
+
+impl<T:FileLoad> FileLoad for ReadOnlyFile<T> {
+    type Read = T::Read;
+    type Map = T::Map;
+
+    fn size(&self) -> usize {
+        self.file.size()
+    }
+
+    fn open_read_from(&self, offset: usize) -> Self::Read {
+        self.file.open_read_from(offset)
+    }
+
+    fn map(&self) -> Self::Map {
+        self.file.map()
     }
 }
 
