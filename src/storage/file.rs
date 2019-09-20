@@ -125,6 +125,7 @@ impl FileLoad for MemoryBackedStore {
     }
 }
 
+#[derive(Clone)]
 pub struct FileBackedStore {
     path: PathBuf
 }
