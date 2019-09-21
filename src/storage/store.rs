@@ -1,4 +1,4 @@
-use crate::layer::layer::GenericLayer;
+use crate::layer::layer::{GenericLayer,LayerType};
 use crate::layer::builder::{SimpleLayerBuilder, LayerFiles};
 use crate::layer::base::{BaseLayer,BaseLayerFiles};
 use crate::layer::child::{ChildLayer,ChildLayerFiles};
@@ -130,6 +130,63 @@ impl LayerStore for MemoryLayerStore {
                     GenericLayer::Base(layer)
                 }
             })
+    }
+}
+
+pub trait PersistentLayerStore {
+    type File: FileLoad+FileStore+Clone;
+
+    fn layer_type(&self, name: &[u32;5]) -> LayerType;
+    fn directories(&self) -> Vec<[u32; 5]>;
+    fn create_directory(&self, name: &[u32; 5]) -> Result<(), std::io::Error>;
+    fn get_file(&self, directory: &[u32;5], name: &str) -> Self::File;
+
+    fn base_layer_files(&self, name: &[u32;5]) -> BaseLayerFiles<Self::File> {
+        BaseLayerFiles {
+            node_dictionary_blocks_file: self.get_file(name, FILENAMES.node_dictionary_blocks),
+            node_dictionary_offsets_file: self.get_file(name, FILENAMES.node_dictionary_offsets),
+
+            predicate_dictionary_blocks_file: self.get_file(name, FILENAMES.predicate_dictionary_blocks),
+            predicate_dictionary_offsets_file: self.get_file(name, FILENAMES.predicate_dictionary_offsets),
+
+            value_dictionary_blocks_file: self.get_file(name, FILENAMES.value_dictionary_blocks),
+            value_dictionary_offsets_file: self.get_file(name, FILENAMES.value_dictionary_offsets),
+
+            s_p_adjacency_list_bits_file: self.get_file(name, FILENAMES.base_s_p_adjacency_list_bits),
+            s_p_adjacency_list_blocks_file: self.get_file(name, FILENAMES.base_s_p_adjacency_list_bit_index_blocks),
+            s_p_adjacency_list_sblocks_file: self.get_file(name, FILENAMES.base_s_p_adjacency_list_bit_index_sblocks),
+            s_p_adjacency_list_nums_file: self.get_file(name, FILENAMES.base_s_p_adjacency_list_nums),
+
+            sp_o_adjacency_list_bits_file: self.get_file(name, FILENAMES.base_sp_o_adjacency_list_bits),
+            sp_o_adjacency_list_blocks_file: self.get_file(name, FILENAMES.base_sp_o_adjacency_list_bit_index_blocks),
+            sp_o_adjacency_list_sblocks_file: self.get_file(name, FILENAMES.base_sp_o_adjacency_list_bit_index_sblocks),
+            sp_o_adjacency_list_nums_file: self.get_file(name, FILENAMES.base_sp_o_adjacency_list_nums)
+        }
+    }
+}
+
+impl<F:FileLoad+FileStore+Clone> LayerStore for PersistentLayerStore<File=F> {
+    type File = F;
+
+    fn layers(&self) -> Vec<[u32;5]> {
+        self.directories()
+    }
+    
+    fn create_base_layer(&mut self) -> SimpleLayerBuilder<F> {
+        let name: [u32;5] = rand::random();
+        self.create_directory(&name).expect("dir creation failure");
+        // todo gotta write metadata so it is clear that this is a base layer
+
+        let blf = self.base_layer_files(&name);
+        SimpleLayerBuilder::new(name, blf)
+    }
+
+    fn create_child_layer(&mut self, parent: [u32;5]) -> Option<SimpleLayerBuilder<F>> {
+        panic!("oh no");
+    }
+
+    fn get_layer(&self, name: [u32;5]) -> Option<GenericLayer<<F as FileLoad>::Map>> {
+        panic!("oh no");
     }
 }
 
