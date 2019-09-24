@@ -14,25 +14,90 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use rand;
 
+/// The LayerStore trait is used to define storage for the database layers
 pub trait LayerStore {
     type File: FileLoad+FileStore+Clone;
+    /// Get all the layers from the store
+    ///
+    /// # Example
+    /// ```
+    /// let layer_store = SomeLayerStore::new();
+    /// let builder = layer_store.create_base_layer();
+    /// layer_store.layers().and_then(|x| {
+    ///     // Do something with the layers
+    /// });
+    /// ```
     fn layers(&self) -> Box<dyn Future<Item=Vec<[u32;5]>, Error=io::Error>+Send+Sync>;
+    /// Create a new base layer on which several child layers can be added.
+    /// This should be the first layer.
+    /// # Example
+    ///
+    /// ```
+    /// layer_store = SomeLayerStore::new();
+    /// layer_store.create_base_layer().and_then(|x| {
+    ///     // Do something after the base layer has been created
+    /// });
+    /// ```
     fn create_base_layer(&mut self) -> Box<dyn Future<Item=SimpleLayerBuilder<Self::File>, Error=io::Error>+Send+Sync>;
+    /// Create a child layer on the layer storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent` - A fixed length array of the parent to which the child layer should be build upon.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut store = MemoryLayerStore::new();
+    /// let mut builder = store.create_base_layer().wait().unwrap();
+    /// let base_name = builder.name();
+    ///
+    /// builder.add_string_triple(&StringTriple::new_value("cow","says","moo"));
+    /// builder.add_string_triple(&StringTriple::new_value("pig","says","oink"));
+    /// builder.add_string_triple(&StringTriple::new_value("duck","says","quack"));
+    /// builder.finalize().wait().unwrap();
+    /// 
+    /// builder = store.create_child_layer(base_name).wait().unwrap();
+    /// let child_name = builder.name();
+    /// builder.remove_string_triple(&StringTriple::new_value("duck","says","quack"));
+    /// builder.add_string_triple(&StringTriple::new_node("cow","likes","pig"));
+    /// builder.finalize().wait().unwrap();
+    /// ```
     fn create_child_layer(&mut self, parent: [u32;5]) -> Box<dyn Future<Item=SimpleLayerBuilder<Self::File>,Error=io::Error>+Send+Sync>;
+    /// Get a layer from the store
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - A fixed length array of 5 unsigned 32 bit integers containing the layer name to fetch from the store
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// let layer = store.get_layer(child_name).wait().unwrap().unwrap();
+    /// ```
     fn get_layer(&self, name: [u32;5]) -> Box<dyn Future<Item=Option<GenericLayer<<Self::File as FileLoad>::Map>>,Error=io::Error>+Send+Sync>;
 }
 
+/// A struct for the Memory Layer Store
 pub struct MemoryLayerStore {
+    /// A HashMap containing all the Layers with the layer names as key
     layers: HashMap<[u32;5],(Option<[u32;5]>,LayerFiles<MemoryBackedStore>)>
 }
 
 impl MemoryLayerStore {
+    /// Create a new memory later store with no layers
     pub fn new() -> MemoryLayerStore {
         MemoryLayerStore {
             layers: HashMap::new()
         }
     }
 
+    /// Get a layer without a future
+    ///
+    /// # Arguments
+    ///
+    /// `name` - The name of the layer to fetch
     fn get_layer_immediate(&self, name: [u32;5]) -> Option<GenericLayer<<MemoryBackedStore as FileLoad>::Map>> {
         self.layers.get(&name)
             .map(|(parent_name, files)| {
@@ -141,15 +206,38 @@ impl LayerStore for MemoryLayerStore {
     }
 }
 
+/// Trait for the persistent storage of layers.
 pub trait PersistentLayerStore : 'static+Send+Sync+Clone {
     type File: FileLoad+FileStore+Clone;
-
+    /// Get the directories
     fn directories(&self) -> Box<dyn Future<Item=Vec<[u32; 5]>, Error=io::Error>+Send+Sync>;
+    /// Create a directory
     fn create_directory(&self) -> Box<dyn Future<Item=[u32;5], Error=io::Error>+Send+Sync>;
+    /// Check if a directory exists
+    ///
+    /// # Arguments
+    ///
+    /// `name` - The name of the layer directory
     fn directory_exists(&self, name: [u32; 5]) -> Box<dyn Future<Item=bool,Error=io::Error>+Send+Sync>;
+    /// Get a specific file from a layer directory
+    ///
+    /// # Arguments
+    ///
+    /// `directory` - name of the directory/layer
+    /// `name` - name of the file
     fn get_file(&self, directory: [u32;5], name: &str) -> Box<dyn Future<Item=Self::File, Error=io::Error>+Send+Sync>;
+    /// Check if a file exists
+    ///
+    /// # Arguments
+    ///
+    /// `directory` - name of the directory/layer
+    /// `name` - name of the file
     fn file_exists(&self, directory: [u32;5], file: &str) -> Box<dyn Future<Item=bool,Error=io::Error>+Send+Sync>;
-
+    /// Return the layer_type, can be a child layer or a base layer
+    ///
+    /// # Arguments
+    ///
+    /// `name` - The name of the layer
     fn layer_type(&self, name: [u32;5]) -> Box<dyn Future<Item=LayerType,Error=io::Error>+Send+Sync> {
         Box::new(self.file_exists(name, FILENAMES.parent)
                  .map(|b| match b {
@@ -157,7 +245,11 @@ pub trait PersistentLayerStore : 'static+Send+Sync+Clone {
                      false => LayerType::Base
                  }))
     }
-
+    /// Get all the base layer files
+    /// 
+    /// # Arguments
+    ///
+    /// `name` - The name of the layer
     fn base_layer_files(&self, name: [u32;5]) -> Box<dyn Future<Item=BaseLayerFiles<Self::File>, Error=io::Error>+Send+Sync> {
         let filenames = vec![FILENAMES.node_dictionary_blocks,
                              FILENAMES.node_dictionary_offsets,
@@ -203,6 +295,11 @@ pub trait PersistentLayerStore : 'static+Send+Sync+Clone {
                  }))
     }
 
+    /// Get all the files of a child layer
+    ///
+    /// # Arguments
+    ///
+    /// `name` - Name of the layer
     fn child_layer_files(&self, name: [u32;5]) -> Box<dyn Future<Item=ChildLayerFiles<Self::File>,Error=io::Error>+Send+Sync> {
         let filenames = vec![FILENAMES.node_dictionary_blocks,
                              FILENAMES.node_dictionary_offsets,
@@ -291,10 +388,12 @@ pub trait PersistentLayerStore : 'static+Send+Sync+Clone {
     }
 }
 
+/// Convert a layer name to a string
 fn name_to_string(name: [u32;5]) -> String {
     format!("{:08x}{:08x}{:08x}{:08x}{:08x}", name[0], name[1], name[2], name[3], name[4])
 }
 
+/// Convert a string to a layer name
 fn string_to_name(string: &str) -> Result<[u32;5], std::io::Error> {
     if string.len() != 40 {
         return Err(io::Error::new(io::ErrorKind::Other, "string not len 40"));
