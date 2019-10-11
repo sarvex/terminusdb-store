@@ -29,6 +29,9 @@
 #[macro_use]
 extern crate lazy_static;
 
+#[macro_use]
+mod errors;
+
 pub mod structure;
 pub mod layer;
 pub mod storage;

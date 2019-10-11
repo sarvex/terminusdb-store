@@ -6,6 +6,7 @@
 use tokio::runtime::{Runtime,TaskExecutor};
 use futures::prelude::*;
 use futures::sync::oneshot;
+use super::errors::*;
 
 use std::io;
 use std::path::PathBuf;
@@ -223,7 +224,7 @@ impl SyncStore {
     /// Create a new database with the given name
     ///
     /// If the database already exists, this will return an error
-    pub fn create(&self, label: &str) -> Result<SyncNamedGraph,io::Error> {
+    pub fn create(&self, label: &str) -> Result<SyncNamedGraph,NamedGraphCreationError> {
         let inner = oneshot::spawn(self.inner.create(label), &self.executor).wait();
 
         inner.map(|i| SyncNamedGraph::wrap(i, self.executor.clone()))

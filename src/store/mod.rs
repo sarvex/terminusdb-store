@@ -2,6 +2,8 @@
 //!
 //! It is expected that most users of this library will work exclusively with the types contained in this module.
 pub mod sync;
+mod errors;
+pub use errors::*;
 
 use futures::prelude::*;
 use futures::future;
@@ -9,6 +11,8 @@ use std::sync::Arc;
 use std::path::PathBuf;
 
 use futures_locks::RwLock;
+
+use failure::Fail;
 
 use crate::storage::{LabelStore, LayerStore, CachedLayerStore};
 use crate::storage::memory::{MemoryLabelStore, MemoryLayerStore};
@@ -301,10 +305,11 @@ impl Store {
     /// Create a new database with the given name
     ///
     /// If the database already exists, this will return an error
-    pub fn create(&self, label: &str) -> impl Future<Item=NamedGraph,Error=std::io::Error>+Send {
+    pub fn create(&self, label: &str) -> impl Future<Item=NamedGraph,Error=NamedGraphCreationError>+Send {
         let store = self.clone();
         self.label_store.create_label(label)
             .map(move |label| NamedGraph::new(label.name, store))
+            .map_err(|e|NamedGraphCreationError::Unexpected(e.into()))
     }
 
     /// Open an existing database with the given name, or None if it does not exist

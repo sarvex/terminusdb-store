@@ -26,9 +26,11 @@ mod consts;
 mod file;
 mod layer;
 mod label;
+mod errors;
 pub mod memory;
 pub mod directory;
 
 pub use file::*;
 pub use layer::*;
 pub use label::*;
+pub use errors::*;
