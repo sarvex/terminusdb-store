@@ -334,10 +334,10 @@ impl MemoryLabelStore {
 }
 
 impl LabelStore for MemoryLabelStore {
-    fn labels(&self) -> Box<dyn Future<Item=Vec<Label>,Error=std::io::Error>+Send> {
+    fn labels(&self) -> Box<dyn Future<Item=Vec<String>,Error=std::io::Error>+Send> {
         Box::new(self.labels.read()
                  .then(|l| Ok(l.expect("rwlock read should always succeed")
-                              .values().map(|v|v.clone()).collect())))
+                              .values().map(|v|v.name.to_owned()).collect())))
     }
 
     fn create_label(&self, name: &str) -> Box<dyn Future<Item=Label, Error=std::io::Error>+Send> {
@@ -356,13 +356,55 @@ impl LabelStore for MemoryLabelStore {
                  }))
     }
 
+    fn get_labels(&self, names: Vec<String>) -> Box<dyn Future<Item=Option<Vec<Label>>,Error=std::io::Error>+Send> {
+        Box::new(self.labels.read()
+                 .then(move |l| {
+                     let labels = l.expect("rwlock read should always succeed");
+                     Ok(names.iter()
+                         .map(|n| labels.get(n).map(|label|label.clone()))
+                         .collect()) as Result<Vec<Option<Label>>,io::Error>
+                 })
+                 .map(|labels| match labels.iter().any(|label| label.is_none()) {
+                     true => None,
+                     false => Some(labels.into_iter().map(|l|l.unwrap()).collect())
+                 }))
+    }
+
+    /*
     fn get_label(&self, name: &str) -> Box<dyn Future<Item=Option<Label>,Error=std::io::Error>+Send> {
         let name = name.to_owned();
         Box::new(self.labels.read()
                  .then(move |l| Ok(l.expect("rwlock read should always succeed")
                                    .get(&name).map(|label|label.clone()))))
     }
+    */
 
+    fn set_labels(&self, labels: Vec<Label>) -> Box<dyn Future<Item=bool,Error=std::io::Error>+Send> {
+        Box::new(self.labels.write()
+                 .then(move |s| {
+                     let mut store = s.expect("rwlock write should always succeed");
+
+                     // ensure that all labels are latest version
+                     for label in labels.iter() {
+                         if label.version == 0 {
+                             return Ok(false) as Result<bool,io::Error>;
+                         }
+
+                         let old_label = store.get(&label.name);
+                         if old_label.is_some() && old_label.unwrap().version != label.version-1 {
+                             return Ok(false);
+                         }
+                     }
+
+                     for label in labels.into_iter() {
+                         store.insert(label.name.clone(), label);
+                     }
+
+                     Ok(true)
+                 }))
+    }
+
+    /*
     fn set_label_option(&self, label: &Label, layer: Option<[u32;5]>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
         let new_label = label.with_updated_layer(layer);
 
@@ -385,6 +427,7 @@ impl LabelStore for MemoryLabelStore {
                      }
                  }))
     }
+    */
 }
 
 #[cfg(test)]

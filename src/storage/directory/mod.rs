@@ -1,13 +1,20 @@
 //! Directory-based implementation of storage traits.
 use futures::prelude::*;
+use futures::sync::mpsc;
 use tokio::prelude::*;
 use tokio::fs::{self,*};
+use tokio_threadpool::blocking;
 use std::io::{self,Seek, SeekFrom};
 use std::sync::Arc;
-use std::path::PathBuf;
+use std::path::{Path,PathBuf};
 use memmap::*;
+use fs2::FileExt;
 
 use super::*;
+
+mod wal;
+mod locking;
+use locking::*;
 
 #[derive(Clone)]
 pub struct FileBackedStore {
@@ -28,7 +35,6 @@ impl FileBackedStore {
 
         file
     }
-
 }
 
 enum FileBacking {
@@ -168,6 +174,53 @@ impl PersistentLayerStore for DirectoryLayerStore {
     }
 }
 
+fn read_label_file<R: AsyncRead+Send>(r: R, name: &str) -> impl Future<Item=(R,Label),Error=io::Error>+Send {
+    let name = name.to_owned();
+    tokio::io::read_to_end(r, Vec::new())
+        .and_then(move |(r,data)| {
+            let s = String::from_utf8_lossy(&data);
+            let lines: Vec<&str> = s.lines().collect();
+            if lines.len() != 2 {
+                let err = io::Error::new(io::ErrorKind::InvalidData, format!("expected label file to have two lines. contents were ({:?})",lines));
+
+                return future::Either::A(future::err(err));
+            }
+            let version_str = &lines[0];
+            let layer_str = &lines[1];
+
+            let version = u64::from_str_radix(version_str,10);
+            if version.is_err() {
+                let err = io::Error::new(io::ErrorKind::InvalidData, format!("expected first line of label file to be a number but it was {}", version_str));
+
+                return future::Either::A(future::err(err));
+            }
+
+            if layer_str.len() == 0 {
+                future::Either::A(future::ok((r, Label {
+                    name,
+                    layer: None,
+                    version: version.unwrap()
+                })))
+            }
+            else {
+                let layer = layer::string_to_name(layer_str);
+                future::Either::B(layer.into_future()
+                          .map(move |layer| (r, Label {
+                              name,
+                              layer: Some(layer),
+                              version: version.unwrap()
+                         })))
+            }
+
+        })
+}
+
+/*
+fn read_labels_from_wal(names: Vec<String>) -> impl Future<Item=Vec<Option<Label>>, Error=io::Error>+Send {
+
+}
+*/
+
 #[derive(Clone)]
 pub struct DirectoryLabelStore {
     path: PathBuf
@@ -179,56 +232,42 @@ impl DirectoryLabelStore {
             path: path.into()
         }
     }
-}
 
-fn get_label_from_file(path: PathBuf) -> impl Future<Item=Label,Error=std::io::Error>+Send {
-    let label = path.file_stem().unwrap().to_str().unwrap().to_owned();
+    fn get_labels_from_wal(&self, names: Vec<String>) -> impl Future<Item=(u64, Vec<Label>),Error=io::Error>+Send {
+        future::ok((0,Vec::new()))
+    }
 
-    fs::read(path)
-        .and_then(move |data| {
-            let s = String::from_utf8_lossy(&data);
-            let lines: Vec<&str> = s.lines().collect();
-            if lines.len() != 2 {
-                let result: Box<dyn Future<Item=_,Error=_>+Send> = 
-                    Box::new(future::err(io::Error::new(io::ErrorKind::InvalidData, format!("expected label file to have two lines. contents were ({:?})",lines))));
-                return result;
-            }
-            let version_str = &lines[0];
-            let layer_str = &lines[1];
+    fn get_labels_from_files(&self, mut names: Vec<String>, max_version: u64) -> impl Future<Item=Vec<Label>,Error=io::Error>+Send {
+        names.sort();
 
-            let version = u64::from_str_radix(version_str,10);
-            if version.is_err() {
-                return Box::new(future::err(io::Error::new(io::ErrorKind::InvalidData, format!("expected first line of label file to be a number but it was {}", version_str))));
-            }
+        stream::iter_ok(names)
+            .and_then(|n| LockedFile::open(n.clone())
+                      .map(move |f|(n,f)))
+            .collect()
+            .and_then(move |files:Vec<(String, Option<LockedFile>)>|
+                      stream::iter_ok(files)
+                      .and_then(move |(name, f)| match f {
+                          Some(f) => future::Either::A(read_label_file(f,&name)
+                                                       .map(move |(_,l)| match l.version > max_version {
+                                                           true => None,
+                                                           false => Some(l)
+                                                       })),
+                          None => future::Either::B(future::ok(None))
+                      })
+                      .filter_map(|label|label)
+                      .collect())
+    }
 
-            if layer_str.len() == 0 {
-                Box::new(future::ok(Label {
-                    name: label,
-                    layer: None,
-                    version: version.unwrap()
-                }))
-            }
-            else {
-                let layer = layer::string_to_name(layer_str);
-                Box::new(layer.into_future()
-                         .map(|layer| Label {
-                             name: label,
-                             layer: Some(layer),
-                             version: version.unwrap()
-                         }))
-            }
-
-        })
 }
 
 impl LabelStore for DirectoryLabelStore {
-    fn labels(&self) -> Box<dyn Future<Item=Vec<Label>,Error=std::io::Error>+Send> {
+    fn labels(&self) -> Box<dyn Future<Item=Vec<String>,Error=std::io::Error>+Send> {
         Box::new(fs::read_dir(self.path.clone()).flatten_stream()
                  .map(|direntry| (direntry.file_name(), direntry))
                  .and_then(|(dir_name, direntry)| future::poll_fn(move || direntry.poll_file_type())
                            .map(move |ft| (dir_name, ft.is_file())))
                  .filter(|(file_name, is_file)|file_name.to_str().unwrap().ends_with(".label") && *is_file)
-                 .and_then(|(file_name, _)| get_label_from_file(file_name.into()))
+                 .map(|(file_name, _)| file_name.into_string().unwrap())
                  .collect())
     }
 
@@ -249,6 +288,15 @@ impl LabelStore for DirectoryLabelStore {
                            .map(move |_| Label::new_empty(&label))))
     }
 
+    fn get_labels(&self, mut names: Vec<String>) -> Box<dyn Future<Item=Option<Vec<Label>>,Error=std::io::Error>+Send> {
+        unimplemented!();
+    }
+
+    fn set_labels(&self, labels: Vec<Label>) -> Box<dyn Future<Item=bool,Error=std::io::Error>+Send> {
+        unimplemented!();
+    }
+
+    /*
     fn get_label(&self, label: &str) -> Box<dyn Future<Item=Option<Label>,Error=std::io::Error>+Send> {
         let label = label.to_owned();
         let mut p = self.path.clone();
@@ -288,6 +336,7 @@ impl LabelStore for DirectoryLabelStore {
                      Box::new(future::ok(None))
                  }))
     }
+    */
 }
 
 #[cfg(test)]

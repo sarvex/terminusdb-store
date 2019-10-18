@@ -1,0 +1,10 @@
+<record><record type as byte><record length as vbyte)><crc32 hash>
+
+where record type:
+- 0: label write
+(<name 0-terminated string><layer as 20 bytes>)<4 byte identifier>
+- 1: checkpoint
+<4 byte identifier of write>
+
+no label write should be written when another write already exists with a higher identifier
+no checkpoint should be written when another checkpoint already exists with a higher identifier

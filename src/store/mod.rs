@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use futures_locks::RwLock;
 
-use crate::storage::{LabelStore, LayerStore, CachedLayerStore};
+use crate::storage::{Label,LabelStore, LayerStore, CachedLayerStore};
 use crate::storage::memory::{MemoryLabelStore, MemoryLayerStore};
 use crate::storage::directory::{DirectoryLabelStore, DirectoryLayerStore};
 use crate::layer::{Layer,LayerBuilder,ObjectType,StringTriple,IdTriple,SubjectLookup,ObjectLookup, PredicateLookup};
@@ -317,7 +317,8 @@ impl NamedGraph {
                         }.and_then(move |b| {
                             let result: Box<dyn Future<Item=_,Error=_>+Send> =
                                 if b {
-                                    Box::new(store.label_store.set_label(&label, layer_name).map(|_|true))
+                                    let new_label = Label::updated(&label, Some(layer_name));
+                                    Box::new(store.label_store.set_label(new_label))
                                 } else {
                                     Box::new(future::ok(false))
                                 };

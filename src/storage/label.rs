@@ -23,26 +23,27 @@ impl Label {
         }
     }
 
-    pub fn with_updated_layer(&self, layer: Option<[u32;5]>) -> Label {
+    pub fn updated(previous: &Label, layer: Option<[u32;5]>) -> Label {
         Label {
-            name: self.name.clone(),
+            name: previous.name.clone(),
             layer,
-            version: self.version+1
+            version: previous.version+1
         }
     }
 }
 
 pub trait LabelStore: Send+Sync {
-    fn labels(&self) -> Box<dyn Future<Item=Vec<Label>,Error=std::io::Error>+Send>;
+    fn labels(&self) -> Box<dyn Future<Item=Vec<String>,Error=std::io::Error>+Send>;
     fn create_label(&self, name: &str) -> Box<dyn Future<Item=Label, Error=std::io::Error>+Send>;
-    fn get_label(&self, name: &str) -> Box<dyn Future<Item=Option<Label>,Error=std::io::Error>+Send>;
-    fn set_label_option(&self, label: &Label, layer: Option<[u32;5]>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send>;
+    fn get_labels(&self, names: Vec<String>) -> Box<dyn Future<Item=Option<Vec<Label>>,Error=std::io::Error>+Send>;
+    fn set_labels(&self, labels: Vec<Label>) -> Box<dyn Future<Item=bool,Error=std::io::Error>+Send>;
 
-    fn set_label(&self, label: &Label, layer: [u32;5]) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
-        self.set_label_option(label, Some(layer))
+    fn get_label(&self, name: &str) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
+        Box::new(self.get_labels(vec![name.to_owned()])
+                 .map(|l|l.map(|mut l|l.pop().unwrap())))
     }
 
-    fn clear_label(&self, label: &Label) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
-        self.set_label_option(label, None)
+    fn set_label(&self, label: Label) -> Box<dyn Future<Item=bool,Error=std::io::Error>+Send> {
+        self.set_labels(vec![label])
     }
 }
