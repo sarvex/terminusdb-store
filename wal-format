@@ -1,4 +1,4 @@
-<record><record type as byte><record length as vbyte)><crc32 hash>
+<record type as byte><record><record length as vbyte)><crc32 hash>
 
 where record type:
 - 0: label write

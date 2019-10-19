@@ -113,14 +113,6 @@ impl LockedFile {
                 _ => future::err(e)
             })
     }
-
-    pub fn seek(mut self, pos: SeekFrom) -> impl Future<Item=LockedFile, Error=io::Error> {
-        let mut file = None;
-        std::mem::swap(&mut file, &mut self.file);
-        let file = file.expect("tried to seek in dropped LockedFile");
-        file.seek(pos)
-            .map(|(file,_)| LockedFile { file: Some(file) })
-    }
 }
 
 impl Read for LockedFile {
@@ -142,10 +134,10 @@ impl Drop for LockedFile {
     }
 }
 
-pub struct LockedFileWriter {
+pub struct ExclusiveLockedFile {
     file: Option<fs::File>
 }
-impl LockedFileWriter {
+impl ExclusiveLockedFile {
     pub fn open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Self,Error=io::Error> {
         fs::OpenOptions::new().read(true).write(true).open(path)
             .map(|f| f.into_std())
@@ -153,7 +145,7 @@ impl LockedFileWriter {
                 Ok(()) => Box::new(future::ok(f)) as Box<dyn Future<Item=std::fs::File,Error=io::Error>>,
                 Err(_) => Box::new(LockedFileLockFuture::new_exclusive(f))
             })
-            .map(|f| LockedFileWriter { file: Some(fs::File::from_std(f)) })
+            .map(|f| ExclusiveLockedFile { file: Some(fs::File::from_std(f)) })
     }
 
     pub fn write_label(self, label: &Label) -> impl Future<Item=bool, Error=io::Error> {
@@ -182,18 +174,18 @@ impl LockedFileWriter {
     }
 }
 
-impl Read for LockedFileWriter {
+impl Read for ExclusiveLockedFile {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         self.file.as_mut().expect("tried to read from dropped LockedFile").read(buf)
     }
 }
 
-impl AsyncRead for LockedFileWriter {
+impl AsyncRead for ExclusiveLockedFile {
 }
 
-impl Write for LockedFileWriter {
+impl Write for ExclusiveLockedFile {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.file.as_mut().expect("tried to write to dropped LockedFileWriter").write(buf)
+        self.file.as_mut().expect("tried to write to dropped ExclusiveLockedFile").write(buf)
     }
 
     fn flush(&mut self) -> Result<(), io::Error> {
@@ -201,13 +193,24 @@ impl Write for LockedFileWriter {
     }
 }
 
-impl AsyncWrite for LockedFileWriter {
+impl AsyncWrite for ExclusiveLockedFile {
     fn shutdown(&mut self) -> Result<Async<()>, io::Error> {
-        self.file.as_mut().expect("tried to shutdown dropped LockedFileWriter").shutdown()
+        let result = self.file.as_mut().expect("tried to shutdown dropped ExclusiveLockedFile").shutdown();
+
+        match result {
+            Ok(Async::Ready(())) => {
+                let mut file = None;
+                std::mem::swap(&mut file, &mut self.file);
+                file.unwrap().into_std().unlock().unwrap();
+            },
+            _ => {}
+        };
+
+        result
     }
 }
 
-impl Drop for LockedFileWriter {
+impl Drop for ExclusiveLockedFile {
     fn drop(&mut self) {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
@@ -217,43 +220,26 @@ impl Drop for LockedFileWriter {
     }
 }
 
-pub struct LockedFileAppender {
-    file: Option<fs::File>
-}
-impl LockedFileAppender {
-    pub fn open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Self,Error=io::Error> {
-        fs::OpenOptions::new().append(true).open(path)
-            .map(|f| f.into_std())
-            .and_then(|f| match f.try_lock_exclusive() {
-                Ok(()) => Box::new(future::ok(f)) as Box<dyn Future<Item=std::fs::File,Error=io::Error>>,
-                Err(_) => Box::new(LockedFileLockFuture::new_exclusive(f))
-            })
-            .map(|f| LockedFileAppender { file: Some(fs::File::from_std(f)) })
-    }
+pub trait FutureSeekable: Sized {
+    fn seek(self, pos: SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>>;
 }
 
-impl Write for LockedFileAppender {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.file.as_mut().expect("tried to write to dropped LockedFileAppender").write(buf)
-    }
-
-    fn flush(&mut self) -> Result<(), io::Error> {
-        self.file.as_mut().expect("tried to flush dropped LockedFileWrite").flush()
-    }
-}
-
-impl AsyncWrite for LockedFileAppender {
-    fn shutdown(&mut self) -> Result<Async<()>, io::Error> {
-        self.file.as_mut().expect("tried to shutdown dropped LockedFileAppender").shutdown()
-    }
-}
-
-impl Drop for LockedFileAppender {
-    fn drop(&mut self) {
+impl FutureSeekable for LockedFile {
+    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>> {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
-        if file.is_some() {
-            file.unwrap().into_std().unlock().unwrap();
-        }
+        let file = file.expect("tried to seek in dropped LockedFile");
+        Box::new(file.seek(pos)
+                 .map(|(file,pos)| (LockedFile { file: Some(file) }, pos)))
+    }
+}
+
+impl FutureSeekable for ExclusiveLockedFile {
+    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>> {
+        let mut file = None;
+        std::mem::swap(&mut file, &mut self.file);
+        let file = file.expect("tried to seek in dropped LockedFile");
+        Box::new(file.seek(pos)
+                 .map(|(file,pos)| (ExclusiveLockedFile { file: Some(file) }, pos)))
     }
 }
