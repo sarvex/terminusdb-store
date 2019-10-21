@@ -5,6 +5,7 @@ use fs2::*;
 use std::path::*;
 use crate::storage::{layer, Label};
 use tokio::fs;
+use log::warn;
 
 // todo not here
 pub fn read_label_file<R: AsyncRead+Send>(r: R, name: &str) -> impl Future<Item=(R,Label),Error=io::Error>+Send {
@@ -215,7 +216,19 @@ impl Drop for ExclusiveLockedFile {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
         if file.is_some() {
+            // getting here is not really where we want to be.
+            // Ideally user code would have called shutdown, which would have made file None.
+            // Since we got here, the lock has not yet been cleared, which we do here.
             file.unwrap().into_std().unlock().unwrap();
+
+            // TODO: get some kind of log event out that exclusively locked file was dropped before file shutdown.
+            warn!("ExclusiveLockedFile was dropped without shutdown");
+
+            // it is a good indicator that we didn't properly close
+            // during a write, which is rather important on shared
+            // file systems like NFS, which sync and report errors on
+            // close.
+            // To make that work well, it also needs to report a backtrace - maybe just on nightly.
         }
     }
 }
@@ -238,7 +251,7 @@ impl FutureSeekable for ExclusiveLockedFile {
     fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>> {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
-        let file = file.expect("tried to seek in dropped LockedFile");
+        let file = file.expect("tried to seek in dropped ExclusiveLockedFile");
         Box::new(file.seek(pos)
                  .map(|(file,pos)| (ExclusiveLockedFile { file: Some(file) }, pos)))
     }
