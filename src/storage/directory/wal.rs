@@ -1,15 +1,14 @@
 //! Write-Ahead Log
 use tokio::codec::{FramedRead,FramedWrite,Decoder,Encoder};
-use crc::{crc32, Hasher32};
-use bytes::{Bytes, BytesMut, BufMut};
+use crc::crc32;
+use bytes::{BytesMut, BufMut};
 use byteorder::{ByteOrder,BigEndian};
-use std::string::FromUtf8Error;
-use std::cell::{RefCell,RefMut};
-use std::rc::Rc;
+use std::collections::{HashSet, HashMap};
+use atomic_refcell::AtomicRefCell;
 use super::*;
 
 #[derive(Debug)]
-enum WalReadError {
+enum WalError {
     FileNotFound,
     UnknownRecordType,
     IncompleteRecord,
@@ -22,8 +21,8 @@ enum WalReadError {
     Io(io::Error)
 }
 
-impl From<io::Error> for WalReadError {
-    fn from(e: io::Error) -> WalReadError {
+impl From<io::Error> for WalError {
+    fn from(e: io::Error) -> WalError {
         match e.kind() {
             io::ErrorKind::NotFound => Self::FileNotFound,
             _ => Self::Io(e)
@@ -60,7 +59,7 @@ impl LabelSetEntry {
         }
     }
 
-    fn from_bytes(data: BytesMut) -> Result<Self,WalReadError> {
+    fn from_bytes(data: BytesMut) -> Result<Self,WalError> {
         let len = data[0] as usize;
         let total_len = len + 21;
 
@@ -70,19 +69,19 @@ impl LabelSetEntry {
 
         let label_slice = &data[1..len+1];
         std::str::from_utf8(label_slice)
-            .map_err(|_|WalReadError::LabelNotUtf8)?;
+            .map_err(|_|WalError::LabelNotUtf8)?;
         
         Ok(Self { data })
     }
 
-    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self, WalReadError> {
+    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self, WalError> {
         if data.len() == 0 {
-            return Err(WalReadError::IncompleteRecord);
+            return Err(WalError::IncompleteRecord);
         }
 
         let entry_len = data[0] as usize + 21;
         if data.len() < entry_len {
-            return Err(WalReadError::IncompleteRecord);
+            return Err(WalError::IncompleteRecord);
         }
 
         let entry_bytes = data.split_to(entry_len);
@@ -155,15 +154,15 @@ impl LabelSetRecord {
         Self { data }
     }
 
-    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self,WalReadError> {
+    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self,WalError> {
         let mut clone = data.clone();
         if data.len() == 0 {
-            return Err(WalReadError::IncompleteRecord);
+            return Err(WalError::IncompleteRecord);
         }
 
         let len = data[0] as usize;
         if len > 100 {
-            return Err(WalReadError::TooManyLabels);
+            return Err(WalError::TooManyLabels);
         }
 
         data.advance(1);
@@ -173,7 +172,7 @@ impl LabelSetRecord {
         }
 
         if data.len() < 4 {
-            return Err(WalReadError::IncompleteRecord);
+            return Err(WalError::IncompleteRecord);
         }
 
         data.advance(4);
@@ -201,6 +200,10 @@ impl LabelSetRecord {
         (0..self.len())
             .scan(entries, |data, _i| Some(LabelSetEntry::try_split_from_bytes(data).unwrap()))
     }
+
+    fn identifier(&self) -> u32 {
+        BigEndian::read_u32(&self.data[self.data.len()-4..])
+    }
 }
 
 struct CheckpointRecord {
@@ -225,12 +228,16 @@ impl CheckpointRecord {
         Self { data: index_bytes }
     }
 
-    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self,WalReadError> {
+    fn try_split_from_bytes(data: &mut BytesMut) -> Result<Self,WalError> {
         if data.len() < 4 {
-            return Err(WalReadError::IncompleteRecord);
+            return Err(WalError::IncompleteRecord);
         }
 
         Ok(Self::from_bytes(data.split_to(4)))
+    }
+
+    fn identifier(&self) -> u32 {
+        BigEndian::read_u32(&self.data)
     }
 }
 
@@ -362,34 +369,30 @@ struct SharedWalFile {
     file: LockedFile,
 }
 
-struct ExclusiveWalFile {
-    file: ExclusiveLockedFile,
-}
-
-trait ReadableWalFile: 'static+Sized {
-    type R: 'static+AsyncRead+FutureSeekable;
+trait ReadableWalFile: 'static+Sized+Send {
+    type R: 'static+AsyncRead+FutureSeekable+Send;
 
     fn file(self) -> Self::R;
     fn from_file(file: Self::R) -> Self;
 
-    fn seek(self, from: SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=WalReadError>> {
+    fn seek(self, from: SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=WalError>+Send> {
         Box::new(self.file().seek(from)
                  .map(|(file, pos)| (Self::from_file(file), pos))
                  .map_err(|e|e.into()))
     }
 
-    fn into_records_stream(self) -> Box<dyn Stream<Item=AnnotatedWalRecord,Error=WalReadError>> {
+    fn into_records_stream(self) -> Box<dyn Stream<Item=AnnotatedWalRecord,Error=WalError>+Send> {
         Box::new(FramedRead::new(self.file(), WalFileDecoder::Start))
     }
 
-    fn next_record(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalReadError,Self)>> {
+    fn next_record(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalError,Self)>+Send> {
         Box::new(FramedRead::new(self.file(), WalFileDecoder::Start)
                  .into_future()
                  .map(|(record, framed)|(record, Self::from_file(framed.into_inner())))
                  .map_err(|(e, framed)|(e, Self::from_file(framed.into_inner()))))
     }
 
-    fn peek_record(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalReadError, Option<Self>)>> {
+    fn peek_record(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalError, Option<Self>)>+Send> {
         Box::new(self.seek(SeekFrom::Current(0))
                  .map_err(|e|(e, None))
                  .and_then(|(wal, start)|
@@ -402,34 +405,34 @@ trait ReadableWalFile: 'static+Sized {
                                Err((e, wal)) => future::Either::B(
                                    wal.seek(SeekFrom::Start(start))
                                        .map_err(|e|(e, None))
-                                       .and_then(move |(file, pos)|
+                                       .and_then(move |(file, _pos)|
                                                  future::err((e, Some(file))))),
                            })))
     }
 
-    fn seek_previous(self) -> Box<dyn Future<Item=(u64,Self),Error=(WalReadError,Option<Self>)>> {
-        Box::new(self.file().seek(SeekFrom::Current(0))
+    fn seek_previous(self) -> Box<dyn Future<Item=(Self, u64),Error=(WalError,Option<Self>)>+Send> {
+        Box::new(self.seek(SeekFrom::Current(0))
                  .map_err(|e|(e.into(), None))
-                 .and_then(|(file, pos)| {
+                 .and_then(|(wal, pos)| {
                      if pos == 0 {
-                         future::Either::A(future::ok((file, pos)))
+                         future::Either::A(future::ok((wal, pos)))
                      }
                      else if pos < 8 {
-                         future::Either::A(future::err((WalReadError::IncompleteRecord,
-                                                        Some(Self::from_file(file)))))
+                         future::Either::A(future::err((WalError::IncompleteRecord,
+                                                        Some(wal))))
                      }
                      else {
                          future::Either::B(
-                             file.seek(SeekFrom::Current(-8))
+                             wal.seek(SeekFrom::Current(-8))
                                  .map_err(|e|(e.into(), None))
-                                 .and_then(|(file, pos)|
-                                           tokio::io::read_exact(file, vec![0;4])
+                                 .and_then(|(wal, pos)|
+                                           tokio::io::read_exact(wal.file(), vec![0;4])
                                            .map_err(|e|(e.into(), None))
                                            .and_then(move |(file, buf)| {
                                                let len = BigEndian::read_u32(&buf) as u64;
                                                if pos < len + 8 {
                                                    future::Either::A(
-                                                       future::err((WalReadError::IncompleteRecord,
+                                                       future::err((WalError::IncompleteRecord,
                                                                     Some(Self::from_file(file)))))
                                                }
                                                else {
@@ -437,10 +440,151 @@ trait ReadableWalFile: 'static+Sized {
                                                        file.seek(SeekFrom::Start(pos - len - 8))
                                                            .map_err(|e|(e.into(), None)))
                                                }
-                                           })))
+                                           })
+                                           .map(|(file, pos)| (Self::from_file(file), pos))))
                      }
-                 })
-                 .map(|(file, pos)|(pos, Self::from_file(file))))
+                 }))
+    }
+
+    fn peek_previous(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalError,Option<Self>)>+Send> {
+        Box::new(self.seek(SeekFrom::Current(0))
+                 .map_err(|e|(e,None))
+                 .and_then(|(wal, current)| match current {
+                     0 => future::Either::A(future::ok((None, wal))),
+                     current => future::Either::B(wal.seek_previous()
+                                                  .and_then(|(wal, _previous)| wal.next_record().map_err(|(e, wal)|(e, Some(wal))))
+                                                  .and_then(move |(record, wal)| match record {
+                                                      Some(record) => future::Either::A(wal.seek(SeekFrom::Current(0))
+                                                                                        .map_err(|e| (e, None))
+                                                                                        .and_then(move |(wal, new_current)| match current == new_current {
+                                                                                            true => future::ok((Some(record), wal)),
+                                                                                            false => future::err((WalError::InvalidRecordLength, Some(wal)))
+                                                                                        })),
+                                                      None => future::Either::B(future::ok((None, wal)))
+                                                  }))
+                 }))
+    }
+
+    fn previous(self) -> Box<dyn Future<Item=(Option<AnnotatedWalRecord>,Self),Error=(WalError,Option<Self>)>+Send> {
+        Box::new(self.peek_previous()
+                 .and_then(|(record, wal)| wal.seek_previous()
+                           .map(move |(wal, _previous)| (record, wal))))
+    }
+
+    fn walk_backwards<T:'static+Send>(self, mut call: impl 'static + FnMut(Option<AnnotatedWalRecord>) -> Option<T> + Send) -> Box<dyn Future<Item=(Self,Option<T>), Error=(WalError, Option<Self>)>+Send> {
+        Box::new(self.previous()
+                 .and_then(|(record, wal)| match (record.is_some(), call(record)) {
+                     (true, None) => future::Either::A(wal.walk_backwards(call)),
+                     (_, Some(result)) => future::Either::B(future::ok((wal, Some(result)))),
+                     _ => future::Either::B(future::ok((wal, None)))
+                 }))
+    }
+
+    fn get_labels_since_last_checkpoint(self, mut labels: HashSet<String>) -> Box<dyn Future<Item=(HashMap<String, (u32, [u32;5])>, u32, Self), Error=(WalError,Option<Self>)>+Send> {
+        let checkpoint: AtomicRefCell<Option<u32>> = AtomicRefCell::new(None);
+        let discovered = AtomicRefCell::new(HashMap::new());
+        let cloned = discovered.clone();
+        let f = move |record:Option<AnnotatedWalRecord>| match record.map(|r|r.record()) {
+            Some(WalRecord::Checkpoint(record)) => {
+                let mut checkpoint = checkpoint.borrow_mut();
+                match *checkpoint {
+                    None => *checkpoint = Some(record.identifier()),
+                    Some(_) => {}
+                }
+
+                None
+            },
+            Some(WalRecord::LabelSet(record)) => {
+                let id = record.identifier();
+                if Some(id) == *checkpoint.borrow() {
+                    // this is the checkpointed record. anything before this has been written to the label files.
+                    Some(id)
+                }
+                else {
+                    for entry in record.entries() {
+                        let mut discovered = discovered.borrow_mut();
+                        let label = entry.label();
+                        if labels.remove(&label) {
+                            discovered.insert(label, (id, entry.layer()));
+                        }
+                    }
+
+                    None
+                }
+            },
+            None => Some(match *checkpoint.borrow() {
+                Some(id) => id,
+                None => 0
+            })
+        };
+
+        Box::new(self.walk_backwards(f)
+                 .map(|(wal, checkpoint_id)| (cloned.into_inner(), checkpoint_id.unwrap_or(0), wal)))
+    }
+
+    fn get_all_labels_since_last_checkpoint(self) -> Box<dyn Future<Item=(HashMap<String, (u32, [u32;5])>, u32, Self), Error=(WalError,Option<Self>)>+Send> {
+        let checkpoint: AtomicRefCell<Option<u32>> = AtomicRefCell::new(None);
+        let discovered = AtomicRefCell::new(HashMap::new());
+        let cloned = discovered.clone();
+        let f = move |record:Option<AnnotatedWalRecord>| match record.map(|r|r.record()) {
+            Some(WalRecord::Checkpoint(record)) => {
+                let mut checkpoint = checkpoint.borrow_mut();
+                match *checkpoint {
+                    None => *checkpoint = Some(record.identifier()),
+                    Some(_) => {}
+                }
+
+                None
+            },
+            Some(WalRecord::LabelSet(record)) => {
+                let id = record.identifier();
+                if Some(id) == *checkpoint.borrow() {
+                    // this is the checkpointed record. anything before this has been written to the label files.
+                    Some(id)
+                }
+                else {
+                    for entry in record.entries() {
+                        let mut discovered = discovered.borrow_mut();
+                        let label = entry.label();
+                        if !discovered.contains_key(&label) {
+                            discovered.insert(label, (id, entry.layer()));
+                        }
+                    }
+
+                    None
+                }
+            },
+            None => Some(match *checkpoint.borrow() {
+                Some(id) => id,
+                None => 0
+            })
+        };
+
+        Box::new(self.walk_backwards(f)
+                 .map(|(wal, checkpoint_id)| (cloned.into_inner(), checkpoint_id.unwrap_or(0), wal)))
+    }
+
+    fn get_last_checkpoint(self) -> Box<dyn Future<Item=(Self, u32), Error=(WalError,Option<Self>)>+Send> {
+        Box::new(self.walk_backwards(|record| match record.map(|r|r.record()) {
+            Some(WalRecord::Checkpoint(record)) => Some(record.identifier()),
+            Some(_) => None,
+            // no checkpoint, so we use 0, which is always going to be less than an actual id
+            None => Some(0)
+        })
+                 .map(|(wal, id)|(wal, id.unwrap())))
+    }
+
+    fn get_last_id(self) -> Box<dyn Future<Item=(Self, u32), Error=(WalError,Option<Self>)>+Send> {
+        Box::new(self.walk_backwards(|record| match record.map(|r|r.record()) {
+            Some(WalRecord::LabelSet(record)) => Some(record.identifier()),
+            Some(_) => None,
+            None => None
+        })
+                 .and_then(|(wal, id)| match id {
+                     // this can occur if we got a cleaned wal-file with only a checkpoint remaining
+                     None => future::Either::A(wal.get_last_checkpoint()),
+                     Some(id) => future::Either::B(future::ok((wal, id)))
+                 }))
     }
 }
 
@@ -483,9 +627,9 @@ enum WalFileDecoder {
 
 impl Decoder for WalFileDecoder {
     type Item = AnnotatedWalRecord;
-    type Error = WalReadError;
+    type Error = WalError;
 
-    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<AnnotatedWalRecord>, WalReadError> {
+    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<AnnotatedWalRecord>, WalError> {
         let mut state = Self::Invalid;
         let mut result = None;
         std::mem::swap(&mut state, self);
@@ -501,7 +645,7 @@ impl Decoder for WalFileDecoder {
                     match tp {
                         0 => state = Self::LabelSetReadNumEntries(bytes.split_to(1)),
                         1 => state = Self::CheckpointReadIdentifier(bytes.split_to(1)),
-                        _ => return Err(WalReadError::UnknownRecordType)
+                        _ => return Err(WalError::UnknownRecordType)
                     };
                 },
                 Self::LabelSetReadNumEntries(mut tp) => {
@@ -511,10 +655,10 @@ impl Decoder for WalFileDecoder {
                     }
                     let len = bytes[0];
                     if len == 0 {
-                        return Err(WalReadError::ZeroLabels);
+                        return Err(WalError::ZeroLabels);
                     }
                     if len > 100 {
-                        return Err(WalReadError::TooManyLabels);
+                        return Err(WalError::TooManyLabels);
                     }
 
                     tp.unsplit(bytes.split_to(1));
@@ -533,7 +677,7 @@ impl Decoder for WalFileDecoder {
                             state = Self::LabelSetReadEntry(read_so_far, num_entries);
                         }
                     },
-                    Err(WalReadError::IncompleteRecord) => {
+                    Err(WalError::IncompleteRecord) => {
                         state = Self::LabelSetReadEntry(read_so_far, num_entries);
                         break;
                     }
@@ -584,12 +728,12 @@ impl Decoder for WalFileDecoder {
 
                         let record_length = BigEndian::read_u32(record_length_bytes.as_ref()) as usize;
                         if record_length != record_bytes.len() {
-                            return Err(WalReadError::InvalidRecordLength);
+                            return Err(WalError::InvalidRecordLength);
                         }
                         let record_checksum = BigEndian::read_u32(record_checksum_bytes.as_ref());
                         let computed_checksum = crc32::checksum_ieee(record_bytes.as_ref());
                         if record_checksum != computed_checksum {
-                            return Err(WalReadError::CrcFailure);
+                            return Err(WalError::CrcFailure);
                         }
 
                         let mut data = record_bytes;
@@ -620,5 +764,49 @@ impl Encoder for WalFileEncoder {
         bytes.unsplit(record.data);
 
         Ok(())
+    }
+}
+
+struct ExclusiveWalFile {
+    file: ExclusiveLockedFile,
+}
+
+impl ExclusiveWalFile {
+    fn append_labelset(self, id: u32, labels: HashMap<String, [u32;5]>) -> impl Future<Item=bool,Error=WalError>+Send {
+        self.get_last_id()
+            .map_err(|(e, _)|e)
+            .and_then(move |(wal, last_id)| match id == last_id+1 {
+                false => future::Either::A(future::ok(false)),
+                true => future::Either::B(FramedWrite::new(wal.file(), WalFileEncoder)
+                                          .send(AnnotatedWalRecord::new(WalRecord::LabelSet(
+                                              LabelSetRecord::new(id,labels.into_iter()
+                                                                  .map(|(label,layer)| LabelSetEntry::new(&label, layer))
+                                                                  .collect()))))
+                                          .and_then(|sink|sink.into_inner().do_shutdown())
+                                          .map_err(|e|e.into())
+                                          .map(|_|true))
+            })
+    }
+
+    fn append_checkpoint(self, checkpoint: u32) -> impl Future<Item=bool,Error=WalError>+Send {
+        self.get_last_checkpoint()
+            .map_err(|(e, _)|e)
+            .and_then(move |(wal, last_checkpoint)| match checkpoint > last_checkpoint {
+                false => future::Either::A(future::ok(false)),
+                true => future::Either::B(FramedWrite::new(wal.file(), WalFileEncoder)
+                                          .send(AnnotatedWalRecord::new(WalRecord::Checkpoint(CheckpointRecord::new(checkpoint))))
+                                          .and_then(|sink|sink.into_inner().do_shutdown())
+                                          .map_err(|e|e.into())
+                                          .map(|_|true))
+            })
+    }
+
+    fn truncate(self) -> impl Future<Item=(),Error=WalError>+Send {
+        // ensure we can peek previous record (so we're probably at a valid point in the stream)
+        self.peek_previous()
+            .map_err(|(e,_)|e)
+            .and_then(|(_, wal)| wal.file.truncate()
+                      .and_then(|f| f.do_shutdown())
+                      .map_err(|e|e.into()))
     }
 }

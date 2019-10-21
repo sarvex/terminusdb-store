@@ -173,6 +173,42 @@ impl ExclusiveLockedFile {
                 }
             })
     }
+
+    pub fn truncate(self) -> impl Future<Item=Self,Error=io::Error> {
+        self.seek(SeekFrom::Current(0))
+            .and_then(|(file,pos)| SetLenFuture { file: Some(file), len: pos })
+    }
+
+    pub fn do_shutdown(mut self) -> impl Future<Item=(),Error=io::Error> {
+        future::poll_fn(move ||self.shutdown())
+    }
+}
+
+struct SetLenFuture {
+    file: Option<ExclusiveLockedFile>,
+    len: u64
+}
+
+impl Future for SetLenFuture {
+    type Item = ExclusiveLockedFile;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Result<Async<ExclusiveLockedFile>, io::Error> {
+        let mut file = None;
+        std::mem::swap(&mut file, &mut self.file);
+
+        let mut file = file.expect("tried to poll unfinished future");
+
+        file.file.as_mut().expect("tried to poll dropped file").poll_set_len(self.len)
+            .map(|a| match a {
+                Async::NotReady => {
+                    let mut file = Some(file);
+                    std::mem::swap(&mut file, &mut self.file);
+                    Async::NotReady
+                },
+                Async::Ready(_) => Async::Ready(file)
+            })
+    }
 }
 
 impl Read for ExclusiveLockedFile {
@@ -234,11 +270,11 @@ impl Drop for ExclusiveLockedFile {
 }
 
 pub trait FutureSeekable: Sized {
-    fn seek(self, pos: SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>>;
+    fn seek(self, pos: SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>+Send>;
 }
 
 impl FutureSeekable for LockedFile {
-    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>> {
+    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>+Send> {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
         let file = file.expect("tried to seek in dropped LockedFile");
@@ -248,7 +284,7 @@ impl FutureSeekable for LockedFile {
 }
 
 impl FutureSeekable for ExclusiveLockedFile {
-    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>> {
+    fn seek(mut self, pos:SeekFrom) -> Box<dyn Future<Item=(Self, u64), Error=io::Error>+Send> {
         let mut file = None;
         std::mem::swap(&mut file, &mut self.file);
         let file = file.expect("tried to seek in dropped ExclusiveLockedFile");

@@ -1,14 +1,11 @@
 //! Directory-based implementation of storage traits.
 use futures::prelude::*;
-use futures::sync::mpsc;
 use tokio::prelude::*;
 use tokio::fs::{self,*};
-use tokio_threadpool::blocking;
 use std::io::{self,Seek, SeekFrom};
 use std::sync::Arc;
-use std::path::{Path,PathBuf};
+use std::path::PathBuf;
 use memmap::*;
-use fs2::FileExt;
 
 use super::*;
 
@@ -172,47 +169,6 @@ impl PersistentLayerStore for DirectoryLayerStore {
                      Err(_) => Ok(false)
                  }))
     }
-}
-
-fn read_label_file<R: AsyncRead+Send>(r: R, name: &str) -> impl Future<Item=(R,Label),Error=io::Error>+Send {
-    let name = name.to_owned();
-    tokio::io::read_to_end(r, Vec::new())
-        .and_then(move |(r,data)| {
-            let s = String::from_utf8_lossy(&data);
-            let lines: Vec<&str> = s.lines().collect();
-            if lines.len() != 2 {
-                let err = io::Error::new(io::ErrorKind::InvalidData, format!("expected label file to have two lines. contents were ({:?})",lines));
-
-                return future::Either::A(future::err(err));
-            }
-            let version_str = &lines[0];
-            let layer_str = &lines[1];
-
-            let version = u64::from_str_radix(version_str,10);
-            if version.is_err() {
-                let err = io::Error::new(io::ErrorKind::InvalidData, format!("expected first line of label file to be a number but it was {}", version_str));
-
-                return future::Either::A(future::err(err));
-            }
-
-            if layer_str.len() == 0 {
-                future::Either::A(future::ok((r, Label {
-                    name,
-                    layer: None,
-                    version: version.unwrap()
-                })))
-            }
-            else {
-                let layer = layer::string_to_name(layer_str);
-                future::Either::B(layer.into_future()
-                          .map(move |layer| (r, Label {
-                              name,
-                              layer: Some(layer),
-                              version: version.unwrap()
-                         })))
-            }
-
-        })
 }
 
 /*
