@@ -340,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn create_and_manipulate_sync_directory_database() {
         let dir = tempdir().unwrap();
         let store = open_sync_directory_store(dir.path());

@@ -423,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn create_and_manipulate_directory_database() {
         let runtime = Runtime::new().unwrap();
         let dir = tempdir().unwrap();

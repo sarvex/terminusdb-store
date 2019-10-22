@@ -101,17 +101,37 @@ pub struct LockedFile {
 }
 
 impl LockedFile {
-    pub fn open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Option<Self>,Error=io::Error>+Send {
+    pub fn open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Self,Error=io::Error>+Send {
         fs::OpenOptions::new().read(true).open(path)
             .map(|f| f.into_std())
             .and_then(|f| match f.try_lock_shared() {
                 Ok(()) => future::Either::A(future::ok(f)),
                 Err(_) => future::Either::B(LockedFileLockFuture::new_shared(f))
             })
-            .map(|f| Some(LockedFile { file: Some(fs::File::from_std(f)) }))
+            .map(|f| LockedFile { file: Some(fs::File::from_std(f)) })
+    }
+
+    pub fn try_open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Option<Self>,Error=io::Error>+Send {
+        Self::open(path)
+            .map(|f| Some(f))
             .or_else(|e| match e.kind() {
-                io::ErrorKind::NotFound => future::ok(None),
-                _ => future::err(e)
+                io::ErrorKind::NotFound => Ok(None),
+                _ => Err(e)
+            })
+    }
+
+    pub fn create_and_open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Self, Error=io::Error>+Send {
+        let path = PathBuf::from(path.as_ref());
+        Self::try_open(path.clone())
+            .and_then(move |f| match(f) {
+                Some(file) => future::Either::A(future::ok(file)),
+                None => future::Either::B(fs::OpenOptions::new()
+                                          .write(true)
+                                          .truncate(false)
+                                          .create(true)
+                                          .open(path.clone())
+                                          .and_then(|f|tokio::io::shutdown(f))
+                                          .and_then(|_| Self::open(path)))
             })
     }
 }

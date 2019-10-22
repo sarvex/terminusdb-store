@@ -5,6 +5,7 @@ use bytes::{BytesMut, BufMut};
 use byteorder::{ByteOrder,BigEndian};
 use std::collections::{HashSet, HashMap};
 use atomic_refcell::AtomicRefCell;
+use std::path::Path;
 use super::*;
 
 #[derive(Debug)]
@@ -367,6 +368,13 @@ impl AnnotatedWalRecord {
 const WAL_FILE_NAME: &'static str = "wa.log";
 struct SharedWalFile {
     file: LockedFile,
+}
+
+impl SharedWalFile {
+    pub fn open<P:'static+AsRef<Path>+Send>(path: P) -> impl Future<Item=Self,Error=io::Error>+Send {
+        LockedFile::create_and_open(path)
+            .map(|file| Self { file } )
+    }
 }
 
 trait ReadableWalFile: 'static+Sized+Send {
@@ -808,5 +816,18 @@ impl ExclusiveWalFile {
             .and_then(|(_, wal)| wal.file.truncate()
                       .and_then(|f| f.do_shutdown())
                       .map_err(|e|e.into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile;
+    #[test]
+    fn empty_file_next_record_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_path = dir.path().join("wa.log");
+
+        let wal = SharedWalFile::open(wal_path);
     }
 }
