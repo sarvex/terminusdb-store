@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 /// directly.
 #[derive(Clone)]
 pub struct BaseLayer<M:'static+AsRef<[u8]>+Clone+Send+Sync> {
-    name: [u32;5],
+    id: LayerId,
     node_dictionary: PfcDict<M>,
     predicate_dictionary: PfcDict<M>,
     value_dictionary: PfcDict<M>,
@@ -31,12 +31,12 @@ pub struct BaseLayer<M:'static+AsRef<[u8]>+Clone+Send+Sync> {
 }
 
 impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> BaseLayer<M> {
-    pub fn load_from_files<F:FileLoad<Map=M>+FileStore>(name: [u32;5], files: &BaseLayerFiles<F>) -> impl Future<Item=Self,Error=std::io::Error> {
+    pub fn load_from_files<F:FileLoad<Map=M>+FileStore>(id: LayerId, files: &BaseLayerFiles<F>) -> impl Future<Item=Self,Error=std::io::Error> {
         files.map_all()
-            .map(move |maps| Self::load(name, maps))
+            .map(move |maps| Self::load(id, maps))
     }
 
-    pub fn load(name: [u32;5],
+    pub fn load(id: LayerId,
                 maps: BaseLayerMaps<M>) -> BaseLayer<M> {
         let node_dictionary = PfcDict::parse(maps.node_dictionary_maps.blocks_map, maps.node_dictionary_maps.offsets_map).unwrap();
         let predicate_dictionary = PfcDict::parse(maps.predicate_dictionary_maps.blocks_map, maps.predicate_dictionary_maps.offsets_map).unwrap();
@@ -53,7 +53,7 @@ impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> BaseLayer<M> {
                                                              predicate_wavelet_tree_width);
 
         BaseLayer {
-            name,
+            id,
             node_dictionary,
             predicate_dictionary,
             value_dictionary,
@@ -69,8 +69,8 @@ impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> BaseLayer<M> {
 }
 
 impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> Layer for BaseLayer<M> {
-    fn name(&self) -> [u32;5] {
-        self.name
+    fn id(&self) -> LayerId {
+        self.id
     }
 
     fn parent(&self) -> Option<Arc<dyn Layer>> {

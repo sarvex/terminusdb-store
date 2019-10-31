@@ -1,9 +1,10 @@
 use futures::prelude::*;
+use crate::layer::LayerId;
 
 #[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Label {
     pub name: String,
-    pub layer: Option<[u32;5]>,
+    pub layer: Option<LayerId>,
     pub version: u64
 }
 
@@ -15,7 +16,7 @@ impl Label {
             version: 0
         }
     }
-    pub fn new(name: &str, layer: [u32;5]) -> Label {
+    pub fn new(name: &str, layer: LayerId) -> Label {
         Label {
             name: name.to_owned(),
             layer: Some(layer),
@@ -23,7 +24,7 @@ impl Label {
         }
     }
 
-    pub fn with_updated_layer(&self, layer: Option<[u32;5]>) -> Label {
+    pub fn with_updated_layer(&self, layer: Option<LayerId>) -> Label {
         Label {
             name: self.name.clone(),
             layer,
@@ -36,9 +37,9 @@ pub trait LabelStore: Send+Sync {
     fn labels(&self) -> Box<dyn Future<Item=Vec<Label>,Error=std::io::Error>+Send>;
     fn create_label(&self, name: &str) -> Box<dyn Future<Item=Label, Error=std::io::Error>+Send>;
     fn get_label(&self, name: &str) -> Box<dyn Future<Item=Option<Label>,Error=std::io::Error>+Send>;
-    fn set_label_option(&self, label: &Label, layer: Option<[u32;5]>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send>;
+    fn set_label_option(&self, label: &Label, layer: Option<LayerId>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send>;
 
-    fn set_label(&self, label: &Label, layer: [u32;5]) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
+    fn set_label(&self, label: &Label, layer: LayerId) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
         self.set_label_option(label, Some(layer))
     }
 

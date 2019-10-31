@@ -7,7 +7,7 @@ use std::io;
 use std::collections::HashMap;
 
 use super::*;
-use crate::layer::{Layer, LayerBuilder, BaseLayer, ChildLayer, SimpleLayerBuilder};
+use crate::layer::{Layer, LayerBuilder, BaseLayer, ChildLayer, SimpleLayerBuilder, LayerId};
 
 pub struct MemoryBackedStoreWriter {
     vec: Arc<sync::RwLock<Vec<u8>>>,
@@ -110,7 +110,7 @@ impl FileLoad for MemoryBackedStore {
 
 #[derive(Clone)]
 pub struct MemoryLayerStore {
-    layers: futures_locks::RwLock<HashMap<[u32;5],(Option<[u32;5]>,LayerFiles<MemoryBackedStore>)>>
+    layers: futures_locks::RwLock<HashMap<LayerId,(Option<LayerId>,LayerFiles<MemoryBackedStore>)>>
 }
 
 impl MemoryLayerStore {
@@ -122,33 +122,33 @@ impl MemoryLayerStore {
 }
 
 impl LayerRetriever for MemoryLayerStore {
-    fn layers(&self) -> Box<dyn Future<Item=Vec<[u32;5]>, Error=io::Error>+Send> {
+    fn layers(&self) -> Box<dyn Future<Item=Vec<LayerId>, Error=io::Error>+Send> {
         Box::new(self.layers.read()
                  .then(|layers|Ok(layers.expect("rwlock read cannot fail").keys().map(|k|k.clone()).collect())))
     }
 
-    fn get_layer_with_retriever(&self, name: [u32;5], retriever: Box<dyn LayerRetriever>) -> Box<dyn Future<Item=Option<Arc<dyn Layer>>,Error=io::Error>+Send> {
+    fn get_layer_with_retriever(&self, id: LayerId, retriever: Box<dyn LayerRetriever>) -> Box<dyn Future<Item=Option<Arc<dyn Layer>>,Error=io::Error>+Send> {
         Box::new(self.layers.read()
                  .then(move |layers| {
                      let layers = layers.expect("rwlock read should always succeed");
-                     let saved = layers.get(&name).map(|x|x.clone());
+                     let saved = layers.get(&id).map(|x|x.clone());
                      let fut: Box<dyn Future<Item=_,Error=_>+Send> = match saved {
                          None => Box::new(future::ok(None)),
                          Some(saved) => Box::new(
                              future::ok(saved)
-                                 .and_then(move |(parent_name, files)| {
+                                 .and_then(move |(parent_id, files)| {
                                      let fut: Box<dyn Future<Item=_,Error=_>+Send> = 
-                                         if parent_name.is_some() {
+                                         if parent_id.is_some() {
                                              let files = files.clone().into_child();
-                                             Box::new(retriever.get_layer(parent_name.unwrap())
+                                             Box::new(retriever.get_layer(parent_id.unwrap())
                                                       .and_then(|parent| match parent {
                                                           None => Err(io::Error::new(io::ErrorKind::InvalidData, "expected parent layer to exist")),
                                                           Some(p) => Ok(p)
                                                       })
-                                                      .and_then(move |parent| ChildLayer::load_from_files(name, parent, &files))
+                                                      .and_then(move |parent| ChildLayer::load_from_files(id, parent, &files))
                                                       .map(|layer| Some(Arc::new(layer) as Arc<dyn Layer>)))
                                          } else {
-                                             Box::new(BaseLayer::load_from_files(name, &files.clone().into_base())
+                                             Box::new(BaseLayer::load_from_files(id, &files.clone().into_base())
                                                       .map(|layer| Some(Arc::new(layer) as Arc<dyn Layer>)))
                                          };
                                      fut
@@ -167,7 +167,7 @@ impl LayerRetriever for MemoryLayerStore {
 
 impl LayerStore for MemoryLayerStore {
     fn create_base_layer(&self) -> Box<dyn Future<Item=Box<dyn LayerBuilder>,Error=io::Error>+Send> {
-        let name = rand::random();
+        let id = rand::random();
 
         let files: Vec<_> = (0..21).map(|_| MemoryBackedStore::new()).collect();
         let blf = BaseLayerFiles {
@@ -216,12 +216,12 @@ impl LayerStore for MemoryLayerStore {
 
         Box::new(self.layers.write()
                  .then(move |layers| {
-                     layers.expect("rwlock write should always succeed").insert(name, (None, LayerFiles::Base(blf.clone())));
-                     Ok(Box::new(SimpleLayerBuilder::new(name, blf)) as Box<dyn LayerBuilder>)
+                     layers.expect("rwlock write should always succeed").insert(id, (None, LayerFiles::Base(blf.clone())));
+                     Ok(Box::new(SimpleLayerBuilder::new(id, blf)) as Box<dyn LayerBuilder>)
                  }))
     }
 
-    fn create_child_layer_with_retriever(&self, parent: [u32;5], retriever: Box<dyn LayerRetriever>) -> Box<dyn Future<Item=Box<dyn LayerBuilder>,Error=io::Error>+Send> {
+    fn create_child_layer_with_retriever(&self, parent: LayerId, retriever: Box<dyn LayerRetriever>) -> Box<dyn Future<Item=Box<dyn LayerBuilder>,Error=io::Error>+Send> {
         let layers = self.layers.clone();
         Box::new(retriever.get_layer(parent)
                  .and_then(|parent_layer| match parent_layer {
@@ -229,7 +229,7 @@ impl LayerStore for MemoryLayerStore {
                      Some(parent_layer) => future::ok(parent_layer)
                  })
                  .and_then(move |parent_layer| {
-                     let name = rand::random();
+                     let id = rand::random();
                      let files: Vec<_> = (0..40).map(|_| MemoryBackedStore::new()).collect();
                      
                      let clf = ChildLayerFiles {
@@ -313,8 +313,8 @@ impl LayerStore for MemoryLayerStore {
 
                      layers.write()
                          .then(move |layers| {
-                             layers.expect("rwlock write should always succeed").insert(name, (Some(parent), LayerFiles::Child(clf.clone())));
-                             Ok(Box::new(SimpleLayerBuilder::from_parent(name, parent_layer, clf)) as Box<dyn LayerBuilder>)
+                             layers.expect("rwlock write should always succeed").insert(id, (Some(parent), LayerFiles::Child(clf.clone())));
+                             Ok(Box::new(SimpleLayerBuilder::from_parent(id, parent_layer, clf)) as Box<dyn LayerBuilder>)
                          })
                  }))
     }
@@ -363,7 +363,7 @@ impl LabelStore for MemoryLabelStore {
                                    .get(&name).map(|label|label.clone()))))
     }
 
-    fn set_label_option(&self, label: &Label, layer: Option<[u32;5]>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
+    fn set_label_option(&self, label: &Label, layer: Option<LayerId>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
         let new_label = label.with_updated_layer(layer);
 
         Box::new(self.labels.write()
@@ -422,7 +422,7 @@ mod tests {
     fn create_layers_from_memory_store() {
         let store = MemoryLayerStore::new();
         let mut builder = store.create_base_layer().wait().unwrap();
-        let base_name = builder.name();
+        let base_id = builder.id();
 
         builder.add_string_triple(&StringTriple::new_value("cow","says","moo"));
         builder.add_string_triple(&StringTriple::new_value("pig","says","oink"));
@@ -430,15 +430,15 @@ mod tests {
 
         builder.commit_boxed().wait().unwrap();
 
-        builder = store.create_child_layer(base_name).wait().unwrap();
-        let child_name = builder.name();
+        builder = store.create_child_layer(base_id).wait().unwrap();
+        let child_id = builder.id();
 
         builder.remove_string_triple(&StringTriple::new_value("duck","says","quack"));
         builder.add_string_triple(&StringTriple::new_node("cow","likes","pig"));
 
         builder.commit_boxed().wait().unwrap();
 
-        let layer = store.get_layer(child_name).wait().unwrap().unwrap();
+        let layer = store.get_layer(child_id).wait().unwrap().unwrap();
 
         assert!(layer.string_triple_exists(&StringTriple::new_value("cow", "says", "moo")));
         assert!(layer.string_triple_exists(&StringTriple::new_value("pig", "says", "oink")));

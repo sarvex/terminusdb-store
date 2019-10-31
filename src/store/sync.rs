@@ -11,7 +11,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::layer::{Layer,ObjectType,StringTriple,IdTriple,SubjectLookup,ObjectLookup, PredicateLookup};
+use crate::layer::{Layer,ObjectType,StringTriple,IdTriple,SubjectLookup,ObjectLookup, PredicateLookup, LayerId};
 use crate::store::{Store, NamedGraph, StoreLayer, StoreLayerBuilder, open_memory_store, open_directory_store};
 
 lazy_static! {
@@ -38,9 +38,9 @@ impl SyncStoreLayerBuilder {
         }
     }
 
-    /// Returns the name of the layer being built
-    pub fn name(&self) -> [u32;5] {
-        self.inner.name()
+    /// Returns the id of the layer being built
+    pub fn id(&self) -> LayerId {
+        self.inner.id()
     }
 
     /// Add a string triple
@@ -103,8 +103,8 @@ impl SyncStoreLayer {
 }
 
 impl Layer for SyncStoreLayer {
-    fn name(&self) -> [u32;5] {
-        self.inner.name()
+    fn id(&self) -> LayerId {
+        self.inner.id()
     }
 
     fn parent(&self) -> Option<Arc<dyn Layer>> {
@@ -330,11 +330,11 @@ mod tests {
 
         let layer2 = builder.commit().unwrap();
         assert!(database.set_head(&layer2).unwrap());
-        let layer2_name = layer2.name();
+        let layer2_id = layer2.id();
 
         let layer = database.head().unwrap().unwrap();
 
-        assert_eq!(layer2_name, layer.name());
+        assert_eq!(layer2_id, layer.id());
         assert!(layer.string_triple_exists(&StringTriple::new_value("cow","says","moo")));
         assert!(layer.string_triple_exists(&StringTriple::new_value("pig","says","oink")));
     }
@@ -359,11 +359,11 @@ mod tests {
 
         let layer2 = builder.commit().unwrap();
         assert!(database.set_head(&layer2).unwrap());
-        let layer2_name = layer2.name();
+        let layer2_id = layer2.id();
 
         let layer = database.head().unwrap().unwrap();
 
-        assert_eq!(layer2_name, layer.name());
+        assert_eq!(layer2_id, layer.id());
         assert!(layer.string_triple_exists(&StringTriple::new_value("cow","says","moo")));
         assert!(layer.string_triple_exists(&StringTriple::new_value("pig","says","oink")));
     }

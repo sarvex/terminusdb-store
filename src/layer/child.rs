@@ -20,7 +20,7 @@ use std::iter::Peekable;
 /// This layer type has a parent. It stores triple additions and removals.
 #[derive(Clone)]
 pub struct ChildLayer<M:'static+AsRef<[u8]>+Clone+Send+Sync> {
-    name: [u32;5],
+    id: LayerId,
     parent: Arc<dyn Layer>,
 
     node_dictionary: PfcDict<M>,
@@ -44,12 +44,12 @@ pub struct ChildLayer<M:'static+AsRef<[u8]>+Clone+Send+Sync> {
 }
 
 impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> ChildLayer<M> {
-    pub fn load_from_files<F:FileLoad<Map=M>+FileStore+Clone>(name: [u32;5], parent: Arc<dyn Layer>, files: &ChildLayerFiles<F>) -> impl Future<Item=Self,Error=std::io::Error> {
+    pub fn load_from_files<F:FileLoad<Map=M>+FileStore+Clone>(id: LayerId, parent: Arc<dyn Layer>, files: &ChildLayerFiles<F>) -> impl Future<Item=Self,Error=std::io::Error> {
         files.map_all()
-            .map(move |maps| Self::load(name, parent, maps))
+            .map(move |maps| Self::load(id, parent, maps))
     }
 
-    pub fn load(name: [u32;5],
+    pub fn load(id: LayerId,
                 parent: Arc<dyn Layer>,
                 maps: ChildLayerMaps<M>) -> ChildLayer<M> {
         let node_dictionary = PfcDict::parse(maps.node_dictionary_maps.blocks_map, maps.node_dictionary_maps.offsets_map).unwrap();
@@ -99,7 +99,7 @@ impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> ChildLayer<M> {
                                                                  neg_predicate_wavelet_tree_width);
 
         ChildLayer {
-            name,
+            id,
             parent: parent,
             
             node_dictionary: node_dictionary,
@@ -161,8 +161,8 @@ impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> ChildLayer<M> {
 }
 
 impl<M:'static+AsRef<[u8]>+Clone+Send+Sync> Layer for ChildLayer<M> {
-    fn name(&self) -> [u32;5] {
-        self.name
+    fn id(&self) -> LayerId {
+        self.id
     }
 
     fn parent(&self) -> Option<Arc<dyn Layer>> {

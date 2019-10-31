@@ -3,6 +3,8 @@ use std::hash::Hash;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub type LayerId = [u32;5];
+
 /// A layer containing dictionary entries and triples.
 ///
 /// A layer can be queried. To answer queries, layers will check their
@@ -10,7 +12,7 @@ use std::sync::Arc;
 /// queried as well.
 pub trait Layer: Send+Sync {
     /// The name of this layer.
-    fn name(&self) -> [u32;5];
+    fn id(&self) -> LayerId;
 
     /// The parent of this layer, or None if this is a base layer.
     fn parent(&self) -> Option<Arc<dyn Layer>>;
@@ -247,7 +249,7 @@ pub trait Layer: Send+Sync {
     fn is_ancestor_of(&self, other: &dyn Layer) -> bool {
         match other.parent() {
             None => false,
-            Some(parent) => parent.name() == self.name() || self.is_ancestor_of(&*parent)
+            Some(parent) => parent.id() == self.id() || self.is_ancestor_of(&*parent)
         }
     }
 }

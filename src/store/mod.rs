@@ -13,7 +13,7 @@ use futures_locks::RwLock;
 use crate::storage::{LabelStore, LayerStore, CachedLayerStore};
 use crate::storage::memory::{MemoryLabelStore, MemoryLayerStore};
 use crate::storage::directory::{DirectoryLabelStore, DirectoryLayerStore};
-use crate::layer::{Layer,LayerBuilder,ObjectType,StringTriple,IdTriple,SubjectLookup,ObjectLookup, PredicateLookup};
+use crate::layer::{Layer,LayerBuilder,ObjectType,StringTriple,IdTriple,SubjectLookup,ObjectLookup, PredicateLookup, LayerId};
 
 use std::io;
 
@@ -27,7 +27,7 @@ use std::io;
 /// as having committed, returning errors on further calls.
 pub struct StoreLayerBuilder {
     builder: RwLock<Option<Box<dyn LayerBuilder>>>,
-    name: [u32;5],
+    id: LayerId,
     store: Store
 }
 
@@ -36,7 +36,7 @@ impl StoreLayerBuilder {
         store.layer_store.create_base_layer()
             .map(|builder|
                  Self {
-                     name: builder.name(),
+                     id: builder.id(),
                      builder: RwLock::new(Some(builder)),
                      store 
                  })
@@ -44,7 +44,7 @@ impl StoreLayerBuilder {
 
     fn wrap(builder: Box<dyn LayerBuilder>, store: Store) -> Self {
         StoreLayerBuilder {
-            name: builder.name(),
+            id: builder.id(),
             builder: RwLock::new(Some(builder)),
             store
         }
@@ -61,9 +61,9 @@ impl StoreLayerBuilder {
             })
     }
 
-    /// Returns the name of the layer being built
-    pub fn name(&self) -> [u32;5] {
-        self.name
+    /// Returns the id of the layer being built
+    pub fn id(&self) -> LayerId {
+        self.id
     }
 
     /// Add a string triple
@@ -91,7 +91,7 @@ impl StoreLayerBuilder {
     /// Commit the layer to storage
     pub fn commit(&self) -> impl Future<Item=StoreLayer, Error=std::io::Error>+Send {
         let store = self.store.clone();
-        let name = self.name;
+        let id = self.id;
         self.builder.write()
             .then(move |b| {
                 let mut swap = b.expect("rwlock write should always succeed");
@@ -104,7 +104,7 @@ impl StoreLayerBuilder {
                         None => Box::new(future::err(io::Error::new(io::ErrorKind::InvalidData, "builder has already been committed"))),
                         Some(builder) => Box::new( 
                             builder.commit_boxed()
-                                .and_then(move |_| store.layer_store.get_layer(name)
+                                .and_then(move |_| store.layer_store.get_layer(id)
                                           .map(move |layer| StoreLayer::wrap(layer.expect("layer that was just created was not found in store"), store))))
                     };
 
@@ -130,7 +130,7 @@ impl StoreLayer {
     /// Create a layer builder based on this layer
     pub fn open_write(&self) -> impl Future<Item=StoreLayerBuilder,Error=io::Error>+Send {
         let store = self.store.clone();
-        self.store.layer_store.create_child_layer(self.layer.name())
+        self.store.layer_store.create_child_layer(self.layer.id())
             .map(move |layer|StoreLayerBuilder::wrap(layer, store))
     }
 
@@ -145,8 +145,8 @@ impl StoreLayer {
 }
 
 impl Layer for StoreLayer {
-    fn name(&self) -> [u32;5] {
-        self.layer.name()
+    fn id(&self) -> LayerId {
+        self.layer.id()
     }
 
     fn parent(&self) -> Option<Arc<dyn Layer>> {
@@ -298,7 +298,7 @@ impl NamedGraph {
     /// Set the database label to the given layer if it is a valid ancestor, returning false otherwise
     pub fn set_head(&self, layer: &StoreLayer) -> impl Future<Item=bool,Error=io::Error>+Send {
         let store = self.store.clone();
-        let layer_name = layer.name();
+        let layer_id = layer.id();
         let cloned_layer = layer.layer.clone();
         store.label_store.get_label(&self.label)
             .and_then(move |label| {
@@ -309,7 +309,7 @@ impl NamedGraph {
                             let result: Box<dyn Future<Item=_,Error=_>+Send> =
                                 match label.layer {
                                     None => Box::new(future::ok(true)),
-                                    Some(layer_name) => Box::new(store.layer_store.get_layer(layer_name)
+                                    Some(layer_id) => Box::new(store.layer_store.get_layer(layer_id)
                                                                  .map(move |l|l.map(|l|l.is_ancestor_of(&*cloned_layer)).unwrap_or(false)))
                                 };
 
@@ -317,7 +317,7 @@ impl NamedGraph {
                         }.and_then(move |b| {
                             let result: Box<dyn Future<Item=_,Error=_>+Send> =
                                 if b {
-                                    Box::new(store.label_store.set_label(&label, layer_name).map(|_|true))
+                                    Box::new(store.label_store.set_label(&label, layer_id).map(|_|true))
                                 } else {
                                     Box::new(future::ok(false))
                                 };
@@ -412,11 +412,11 @@ mod tests {
 
         let layer2 = oneshot::spawn(builder.commit(), &runtime.executor()).wait().unwrap();
         assert!(oneshot::spawn(database.set_head(&layer2), &runtime.executor()).wait().unwrap());
-        let layer2_name = layer2.name();
+        let layer2_id = layer2.id();
 
         let layer = oneshot::spawn(database.head(), &runtime.executor()).wait().unwrap().unwrap();
 
-        assert_eq!(layer2_name, layer.name());
+        assert_eq!(layer2_id, layer.id());
         assert!(layer.string_triple_exists(&StringTriple::new_value("cow","says","moo")));
         assert!(layer.string_triple_exists(&StringTriple::new_value("pig","says","oink")));
     }
@@ -443,11 +443,11 @@ mod tests {
 
         let layer2 = oneshot::spawn(builder.commit(), &runtime.executor()).wait().unwrap();
         assert!(oneshot::spawn(database.set_head(&layer2), &runtime.executor()).wait().unwrap());
-        let layer2_name = layer2.name();
+        let layer2_id = layer2.id();
 
         let layer = oneshot::spawn(database.head(), &runtime.executor()).wait().unwrap().unwrap();
 
-        assert_eq!(layer2_name, layer.name());
+        assert_eq!(layer2_id, layer.id());
         assert!(layer.string_triple_exists(&StringTriple::new_value("cow","says","moo")));
         assert!(layer.string_triple_exists(&StringTriple::new_value("pig","says","oink")));
     }

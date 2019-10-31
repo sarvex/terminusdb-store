@@ -22,8 +22,8 @@ use std::sync::Arc;
 /// Lack of generic types allows layer builders with different storage
 /// backends to be handled by trait objects of this type.
 pub trait LayerBuilder: Send+Sync {
-    /// Returns the name of the layer being built
-    fn name(&self) -> [u32;5];
+    /// Returns the id of the layer being built
+    fn id(&self) -> LayerId;
     /// Add a string triple
     fn add_string_triple(&mut self, triple: &StringTriple);
     /// Add an id triple
@@ -45,7 +45,7 @@ pub trait LayerBuilder: Send+Sync {
 /// triples, and for committing the layer builder to storage.
 #[derive(Clone)]
 pub struct SimpleLayerBuilder<F:'static+FileLoad+FileStore+Clone> {
-    name: [u32;5],
+    id: LayerId,
     parent: Option<Arc<dyn Layer>>,
     files: LayerFiles<F>,
     additions: BTreeSet<PartiallyResolvedTriple>,
@@ -54,9 +54,9 @@ pub struct SimpleLayerBuilder<F:'static+FileLoad+FileStore+Clone> {
 
 impl<F:'static+FileLoad+FileStore+Clone> SimpleLayerBuilder<F> {
     /// Construct a layer builder for a base layer
-    pub fn new(name: [u32;5], files: BaseLayerFiles<F>) -> Self {
+    pub fn new(id: LayerId, files: BaseLayerFiles<F>) -> Self {
         Self {
-            name,
+            id,
             parent: None,
             files: LayerFiles::Base(files),
             additions: BTreeSet::new(),
@@ -65,9 +65,9 @@ impl<F:'static+FileLoad+FileStore+Clone> SimpleLayerBuilder<F> {
     }
 
     /// Construct a layer builder for a child layer
-    pub fn from_parent(name: [u32;5], parent: Arc<dyn Layer>, files: ChildLayerFiles<F>) -> Self {
+    pub fn from_parent(id: LayerId, parent: Arc<dyn Layer>, files: ChildLayerFiles<F>) -> Self {
         Self {
-            name,
+            id,
             parent: Some(parent),
             files: LayerFiles::Child(files),
             additions: BTreeSet::new(),
@@ -106,8 +106,8 @@ impl<F:'static+FileLoad+FileStore+Clone> SimpleLayerBuilder<F> {
 }
 
 impl<F:'static+FileLoad+FileStore+Clone> LayerBuilder for SimpleLayerBuilder<F> {
-    fn name(&self) -> [u32;5] {
-        self.name
+    fn id(&self) -> LayerId {
+        self.id
     }
 
     fn add_string_triple(&mut self, triple: &StringTriple) {
@@ -378,9 +378,9 @@ mod tests {
     }
 
     fn example_base_layer() -> Arc<dyn Layer> {
-        let name = [1,2,3,4,5];
+        let id = [1,2,3,4,5];
         let files = new_base_files();
-        let mut builder = SimpleLayerBuilder::new(name, files.clone());
+        let mut builder = SimpleLayerBuilder::new(id, files.clone());
 
         builder.add_string_triple(&StringTriple::new_value("cow","says","moo"));
         builder.add_string_triple(&StringTriple::new_value("pig","says","oink"));
@@ -388,7 +388,7 @@ mod tests {
 
         builder.commit().wait().unwrap();
 
-        let layer = BaseLayer::load_from_files(name, &files).wait().unwrap();
+        let layer = BaseLayer::load_from_files(id, &files).wait().unwrap();
         Arc::new(layer)
     }
 
@@ -405,15 +405,15 @@ mod tests {
     fn simple_child_layer_construction() {
         let base_layer = example_base_layer();
         let files = new_child_files();
-        let name = [0,0,0,0,0];
-        let mut builder = SimpleLayerBuilder::from_parent(name,base_layer.clone(), files.clone());
+        let id = [0,0,0,0,0];
+        let mut builder = SimpleLayerBuilder::from_parent(id,base_layer.clone(), files.clone());
 
         builder.add_string_triple(&StringTriple::new_value("horse", "says", "neigh"));
         builder.add_string_triple(&StringTriple::new_node("horse", "likes", "cow"));
         builder.remove_string_triple(&StringTriple::new_value("duck", "says", "quack"));
 
         builder.commit().wait().unwrap();
-        let child_layer = Arc::new(ChildLayer::load_from_files(name, base_layer, &files).wait().unwrap());
+        let child_layer = Arc::new(ChildLayer::load_from_files(id, base_layer, &files).wait().unwrap());
 
         assert!(child_layer.string_triple_exists(&StringTriple::new_value("horse", "says", "neigh")));
         assert!(child_layer.string_triple_exists(&StringTriple::new_node("horse", "likes", "cow")));
@@ -425,34 +425,34 @@ mod tests {
     #[test]
     fn multi_level_layers() {
         let base_layer = example_base_layer();
-        let name2 = [0,0,0,0,0];
+        let id2 = [0,0,0,0,0];
         let files2 = new_child_files();
-        let mut builder = SimpleLayerBuilder::from_parent(name2,base_layer.clone(), files2.clone());
+        let mut builder = SimpleLayerBuilder::from_parent(id2,base_layer.clone(), files2.clone());
 
         builder.add_string_triple(&StringTriple::new_value("horse", "says", "neigh"));
         builder.add_string_triple(&StringTriple::new_node("horse", "likes", "cow"));
         builder.remove_string_triple(&StringTriple::new_value("duck", "says", "quack"));
 
         builder.commit().wait().unwrap();
-        let layer2 = Arc::new(ChildLayer::load_from_files(name2, base_layer, &files2).wait().unwrap());
+        let layer2 = Arc::new(ChildLayer::load_from_files(id2, base_layer, &files2).wait().unwrap());
 
-        let name3 = [0,0,0,0,1];
+        let id3 = [0,0,0,0,1];
         let files3 = new_child_files();
-        builder = SimpleLayerBuilder::from_parent(name3, layer2.clone(), files3.clone());
+        builder = SimpleLayerBuilder::from_parent(id3, layer2.clone(), files3.clone());
         builder.remove_string_triple(&StringTriple::new_node("horse", "likes", "cow"));
         builder.add_string_triple(&StringTriple::new_node("horse", "likes", "pig"));
         builder.add_string_triple(&StringTriple::new_value("duck", "says", "quack"));
 
         builder.commit().wait().unwrap();
-        let layer3 = Arc::new(ChildLayer::load_from_files(name3, layer2, &files3).wait().unwrap());
+        let layer3 = Arc::new(ChildLayer::load_from_files(id3, layer2, &files3).wait().unwrap());
 
-        let name4 = [0,0,0,0,1];
+        let id4 = [0,0,0,0,1];
         let files4 = new_child_files();
-        builder = SimpleLayerBuilder::from_parent(name4, layer3.clone(), files4.clone());
+        builder = SimpleLayerBuilder::from_parent(id4, layer3.clone(), files4.clone());
         builder.remove_string_triple(&StringTriple::new_value("pig", "says", "oink"));
         builder.add_string_triple(&StringTriple::new_node("cow", "likes", "horse"));
         builder.commit().wait().unwrap();
-        let layer4 = Arc::new(ChildLayer::load_from_files(name4, layer3, &files4).wait().unwrap());
+        let layer4 = Arc::new(ChildLayer::load_from_files(id4, layer3, &files4).wait().unwrap());
 
         assert!(layer4.string_triple_exists(&StringTriple::new_value("cow", "says", "moo")));
         assert!(layer4.string_triple_exists(&StringTriple::new_value("duck", "says", "quack")));

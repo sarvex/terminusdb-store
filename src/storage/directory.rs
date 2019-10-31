@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use memmap::*;
 
 use super::*;
+use crate::layer::LayerId;
 
 #[derive(Clone)]
 pub struct FileBackedStore {
@@ -115,7 +116,7 @@ impl DirectoryLayerStore {
 
 impl PersistentLayerStore for DirectoryLayerStore {
     type File = FileBackedStore;
-    fn directories(&self) -> Box<dyn Future<Item=Vec<[u32; 5]>, Error=std::io::Error>+Send> {
+    fn directories(&self) -> Box<dyn Future<Item=Vec<LayerId>, Error=std::io::Error>+Send> {
         Box::new(fs::read_dir(self.path.clone()).flatten_stream()
                  .map(|direntry| (direntry.file_name(), direntry))
                  .and_then(|(dir_name, direntry)| future::poll_fn(move || direntry.poll_file_type())
@@ -125,22 +126,22 @@ impl PersistentLayerStore for DirectoryLayerStore {
                      false => None
                  })
                  .and_then(|dir_name| dir_name.to_str().ok_or(io::Error::new(io::ErrorKind::InvalidData, "unexpected non-utf8 directory name")).map(|s|s.to_owned()))
-                 .and_then(|s| string_to_name(&s))
+                 .and_then(|s| string_to_id(&s))
                  .collect())
     }
 
-    fn create_directory(&self) -> Box<dyn Future<Item=[u32;5], Error=io::Error>+Send> {
-        let name = rand::random();
+    fn create_directory(&self) -> Box<dyn Future<Item=LayerId, Error=io::Error>+Send> {
+        let id = rand::random();
         let mut p = self.path.clone();
-        p.push(name_to_string(name));
+        p.push(id_to_string(id));
 
         Box::new(fs::create_dir(p)
-                 .map(move |_| name))
+                 .map(move |_| id))
     }
 
-    fn directory_exists(&self, name: [u32; 5]) -> Box<dyn Future<Item=bool,Error=io::Error>+Send> {
+    fn directory_exists(&self, id: LayerId) -> Box<dyn Future<Item=bool,Error=io::Error>+Send> {
         let mut p = self.path.clone();
-        p.push(name_to_string(name));
+        p.push(id_to_string(id));
 
         Box::new(fs::metadata(p)
                  .then(|result| match result {
@@ -149,16 +150,16 @@ impl PersistentLayerStore for DirectoryLayerStore {
                  }))
     }
 
-    fn get_file(&self, directory: [u32;5], name: &str) -> Box<dyn Future<Item=Self::File, Error=io::Error>+Send> {
+    fn get_file(&self, directory: LayerId, id: &str) -> Box<dyn Future<Item=Self::File, Error=io::Error>+Send> {
         let mut p = self.path.clone();
-        p.push(name_to_string(directory));
-        p.push(name);
+        p.push(id_to_string(directory));
+        p.push(id);
         Box::new(future::ok(FileBackedStore::new(p)))
     }
     
-    fn file_exists(&self, directory: [u32;5], file: &str) -> Box<dyn Future<Item=bool,Error=io::Error>+Send> {
+    fn file_exists(&self, directory: LayerId, file: &str) -> Box<dyn Future<Item=bool,Error=io::Error>+Send> {
         let mut p = self.path.clone();
-        p.push(name_to_string(directory));
+        p.push(id_to_string(directory));
         p.push(file);
         Box::new(fs::metadata(p)
                  .then(|result| match result {
@@ -209,7 +210,7 @@ fn get_label_from_file(path: PathBuf) -> impl Future<Item=Label,Error=std::io::E
                 }))
             }
             else {
-                let layer = layer::string_to_name(layer_str);
+                let layer = layer::string_to_id(layer_str);
                 Box::new(layer.into_future()
                          .map(|layer| Label {
                              name: label,
@@ -266,7 +267,7 @@ impl LabelStore for DirectoryLabelStore {
                  }))
     }
 
-    fn set_label_option(&self, label: &Label, layer: Option<[u32;5]>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
+    fn set_label_option(&self, label: &Label, layer: Option<LayerId>) -> Box<dyn Future<Item=Option<Label>, Error=std::io::Error>+Send> {
         let mut p = self.path.clone();
         p.push(format!("{}.label", label.name));
 
@@ -274,7 +275,7 @@ impl LabelStore for DirectoryLabelStore {
         let new_label = label.with_updated_layer(layer);
         let contents = match new_label.layer {
             None => format!("{}\n\n", new_label.version).into_bytes(),
-            Some(layer) => format!("{}\n{}\n", new_label.version, layer::name_to_string(layer)).into_bytes()
+            Some(layer) => format!("{}\n{}\n", new_label.version, layer::id_to_string(layer)).into_bytes()
         };
 
         Box::new(self.get_label(&label.name)
@@ -405,26 +406,26 @@ mod tests {
         let store = DirectoryLayerStore::new(dir.path());
         let task = store.create_base_layer()
             .and_then(|mut builder| {
-                let base_name = builder.name();
+                let base_id = builder.id();
 
                 builder.add_string_triple(&StringTriple::new_value("cow","says","moo"));
                 builder.add_string_triple(&StringTriple::new_value("pig","says","oink"));
                 builder.add_string_triple(&StringTriple::new_value("duck","says","quack"));
 
                 builder.commit_boxed()
-                    .map(move |_| base_name)
+                    .map(move |_| base_id)
             })
-            .and_then(move |base_name| store.create_child_layer(base_name)
+            .and_then(move |base_id| store.create_child_layer(base_id)
                       .and_then(|mut builder| {
-                          let child_name = builder.name();
+                          let child_id = builder.id();
 
                           builder.remove_string_triple(&StringTriple::new_value("duck","says","quack"));
                           builder.add_string_triple(&StringTriple::new_node("cow","likes","pig"));
 
                           builder.commit_boxed()
-                              .map(move |_| child_name)
+                              .map(move |_| child_id)
                       })
-                      .and_then(move |child_name| store.get_layer(child_name)));
+                      .and_then(move |child_id| store.get_layer(child_id)));
 
         let layer = oneshot::spawn(task, &runtime.executor()).wait().unwrap().unwrap();
         runtime.shutdown_now();
