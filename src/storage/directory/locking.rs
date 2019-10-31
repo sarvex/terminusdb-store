@@ -96,6 +96,7 @@ impl Future for LockedFileLockFuture {
     }
 }
 
+#[derive(Debug)]
 pub struct LockedFile {
     file: Option<fs::File>
 }
