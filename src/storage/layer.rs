@@ -26,6 +26,7 @@ pub trait LayerStore: LayerRetriever {
     fn create_child_layer(&self, parent: [u32;5]) -> Box<dyn Future<Item=Box<dyn LayerBuilder>,Error=io::Error>+Send> {
         self.create_child_layer_with_retriever(parent, self.boxed_retriever())
     }
+    fn register_equivalent(&self, original: [u32;5], improvement: [u32;5]) -> Box<dyn Future<Item=(),Error=io::Error>+Send>;
 }
 
 pub trait PersistentLayerStore : 'static+Send+Sync+Clone {
@@ -372,6 +373,9 @@ impl<F:'static+FileLoad+FileStore+Clone,T: 'static+PersistentLayerStore<File=F>>
                                                .map(move |clf| Box::new(SimpleLayerBuilder::from_parent(dir_name, parent_layer, clf)) as Box<dyn LayerBuilder>)))))
     }
 
+    fn register_equivalent(&self, original: [u32;5], improvement: [u32;5]) -> Box<dyn Future<Item=(), Error=io::Error>+Send> {
+        unimplemented!();
+    }
 }
 
 #[derive(Clone)]
@@ -448,6 +452,10 @@ impl LayerStore for CachedLayerStore {
 
     fn create_child_layer_with_retriever(&self, parent: [u32;5], retriever: Box<dyn LayerRetriever>) -> Box<dyn Future<Item=Box<dyn LayerBuilder>,Error=io::Error>+Send> {
         self.inner.create_child_layer_with_retriever(parent, retriever)
+    }
+
+    fn register_equivalent(&self, original: [u32;5], improvement: [u32;5]) -> Box<dyn Future<Item=(), Error=io::Error>+Send> {
+        self.inner.register_equivalent(original, improvement)
     }
 }
 

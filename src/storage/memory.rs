@@ -327,6 +327,10 @@ impl LayerStore for MemoryLayerStore {
                          })
                  }))
     }
+
+    fn register_equivalent(&self, original: [u32;5], improvement: [u32;5]) -> Box<dyn Future<Item=(), Error=io::Error>+Send> {
+        unimplemented!();
+    }
 }
 
 #[derive(Clone)]

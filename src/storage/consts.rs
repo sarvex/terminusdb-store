@@ -72,6 +72,7 @@ pub struct Filenames {
     pub neg_predicate_wavelet_tree_bit_index_sblocks: &'static str,
 
     pub parent: &'static str,
+    pub equivalence: &'static str,
 }
 
 pub const FILENAMES: Filenames = Filenames {
@@ -147,5 +148,6 @@ pub const FILENAMES: Filenames = Filenames {
     neg_predicate_wavelet_tree_bit_index_blocks: "neg_predicate_wavelet_tree_bit_index_blocks.logarray",
     neg_predicate_wavelet_tree_bit_index_sblocks: "neg_predicate_wavelet_tree_bit_index_sblocks.logarray",
 
-    parent: "parent.hex"
+    parent: "parent.hex",
+    equivalence: "equivalence.hex",
 };
