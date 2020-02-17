@@ -13,8 +13,13 @@ use super::base::*;
 use super::child::*;
 use super::layer::*;
 use crate::storage::*;
+use futures::future;
 use futures::prelude::*;
+use futures::sink::Sink;
+use futures::sync::mpsc;
+use futures::sync::oneshot;
 use std::collections::{BTreeSet, HashMap};
+use std::io;
 use std::sync::Arc;
 
 /// A layer builder trait with no generic typing.
@@ -290,143 +295,181 @@ impl<F: 'static + FileLoad + FileStore + Clone> LayerBuilder for SimpleLayerBuil
     }
 }
 
+#[derive(Debug)]
+pub enum LayerModification {
+    Add(StringTriple),
+    AddId(IdTriple),
+    Remove(StringTriple),
+    RemoveId(IdTriple),
+    Build(oneshot::Sender<Result<(), io::Error>>),
+}
+
+/// Layer builder which can be built concurrently
+#[derive(Clone)]
+pub struct ConcurrentLayerBuilder {
+    sender: mpsc::Sender<LayerModification>,
+}
+
+impl ConcurrentLayerBuilder {
+    pub fn new<F: FileLoad + FileStore>(
+        files: BaseLayerFiles<F>,
+    ) -> impl Future<Item = ConcurrentLayerBuilder, Error = io::Error> + Send {
+        let additions: BTreeSet<StringTriple> = BTreeSet::new();
+
+        let (sender, receiver) = mpsc::channel(100);
+
+        let task = future::loop_fn((receiver, additions), |(receiver, mut additions)| {
+            receiver
+                .into_future()
+                .then(|result| future::ok(result.expect("receiver receive should never fail")))
+                .and_then(|(instruction, mut receiver)| match instruction {
+                    Some(LayerModification::Add(triple)) => {
+                        additions.insert(triple);
+                        future::ok(future::Loop::Continue((receiver, additions)))
+                    }
+                    Some(LayerModification::Build(sender)) => {
+                        receiver.close();
+                        future::ok(future::Loop::Break((additions, sender)))
+                    }
+                    Some(_) => future::ok(future::Loop::Continue((receiver, additions))),
+                    None => future::err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "layer build instruction stream ended unexpectedly",
+                    )),
+                })
+        })
+        .and_then(move |(additions, result_sender)| {
+            let builder = BaseLayerFileBuilder::from_files(&files);
+            let mut nodes = BTreeSet::new();
+            let mut predicates = BTreeSet::new();
+            let mut values = BTreeSet::new();
+            for StringTriple {
+                subject,
+                predicate,
+                object,
+            } in additions.iter()
+            {
+                nodes.insert(subject.clone());
+                predicates.insert(predicate.clone());
+                match object {
+                    ObjectType::Node(o) => nodes.insert(o.clone()),
+                    ObjectType::Value(v) => values.insert(v.clone()),
+                };
+            }
+
+            builder
+                .add_nodes(nodes.clone())
+                .map(|(ids, b)| {
+                    (
+                        nodes.into_iter().zip(ids).collect::<HashMap<String, u64>>(),
+                        b,
+                    )
+                })
+                .and_then(move |(node_map, b)| {
+                    b.add_predicates(predicates.clone())
+                        .map(|(ids, b)| {
+                            (
+                                predicates
+                                    .into_iter()
+                                    .zip(ids)
+                                    .collect::<HashMap<String, u64>>(),
+                                b,
+                            )
+                        })
+                        .and_then(move |(predicate_map, b)| {
+                            b.add_values(values.clone())
+                                .map(|(ids, b)| {
+                                    (
+                                        values
+                                            .into_iter()
+                                            .zip(ids)
+                                            .collect::<HashMap<String, u64>>(),
+                                        b,
+                                    )
+                                })
+                                .and_then(|(value_map, b)| {
+                                    b.into_phase2()
+                                        .map(|b| (b, node_map, predicate_map, value_map))
+                                })
+                        })
+                })
+                .and_then(move |(builder, node_map, predicate_map, value_map)| {
+                    builder.add_id_triples(additions.into_iter().map(
+                        move |StringTriple {
+                                  subject,
+                                  predicate,
+                                  object,
+                              }| IdTriple {
+                            subject: node_map[&subject],
+                            predicate: predicate_map[&predicate],
+                            object: match object {
+                                ObjectType::Node(node) => node_map[&node],
+                                ObjectType::Value(value) => {
+                                    node_map.len() as u64 + value_map[&value]
+                                }
+                            },
+                        },
+                    ))
+                })
+                .and_then(|builder| builder.finalize())
+                .then(|result| {
+                    result_sender
+                        .send(result)
+                        .map_err(|_| io::Error::new(io::ErrorKind::Other, "send failed"))
+                })
+        })
+        .map_err(|e| {
+            panic!(
+                "error should not occur at this point, but did anyway: {:?}",
+                e
+            )
+        });
+
+        future::ok(()).map(|_| {
+            tokio::executor::spawn(task);
+            ConcurrentLayerBuilder { sender }
+        })
+    }
+
+    /// send a triple into the builder. we don't care at all about the result.
+    pub fn add_string_triple(
+        &self,
+        triple: &StringTriple,
+    ) -> impl Future<Item = (), Error = ()> + Send {
+        self.sender
+            .clone()
+            .send(LayerModification::Add(triple.clone()))
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    pub fn commit(&self) -> impl Future<Item = (), Error = io::Error> + Send {
+        let (result_sender, result_receiver) = oneshot::channel();
+        self.sender
+            .clone()
+            .send(LayerModification::Build(result_sender))
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    "failed to commit as builder was already closed",
+                )
+            })
+            .and_then(move |_| result_receiver.map_err(|_| panic!("couldn't.")))
+            .and_then(|received| received)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::memory::*;
-
-    fn new_base_files() -> BaseLayerFiles<MemoryBackedStore> {
-        let files: Vec<_> = (0..21).map(|_| MemoryBackedStore::new()).collect();
-        BaseLayerFiles {
-            node_dictionary_files: DictionaryFiles {
-                blocks_file: files[0].clone(),
-                offsets_file: files[1].clone(),
-            },
-            predicate_dictionary_files: DictionaryFiles {
-                blocks_file: files[2].clone(),
-                offsets_file: files[3].clone(),
-            },
-            value_dictionary_files: DictionaryFiles {
-                blocks_file: files[4].clone(),
-                offsets_file: files[5].clone(),
-            },
-            s_p_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[6].clone(),
-                    blocks_file: files[7].clone(),
-                    sblocks_file: files[8].clone(),
-                },
-                nums_file: files[9].clone(),
-            },
-            sp_o_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[10].clone(),
-                    blocks_file: files[11].clone(),
-                    sblocks_file: files[12].clone(),
-                },
-                nums_file: files[13].clone(),
-            },
-            o_ps_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[14].clone(),
-                    blocks_file: files[15].clone(),
-                    sblocks_file: files[16].clone(),
-                },
-                nums_file: files[17].clone(),
-            },
-            predicate_wavelet_tree_files: BitIndexFiles {
-                bits_file: files[18].clone(),
-                blocks_file: files[19].clone(),
-                sblocks_file: files[20].clone(),
-            },
-        }
-    }
-
-    fn new_child_files() -> ChildLayerFiles<MemoryBackedStore> {
-        let files: Vec<_> = (0..40).map(|_| MemoryBackedStore::new()).collect();
-        ChildLayerFiles {
-            node_dictionary_files: DictionaryFiles {
-                blocks_file: files[0].clone(),
-                offsets_file: files[1].clone(),
-            },
-            predicate_dictionary_files: DictionaryFiles {
-                blocks_file: files[2].clone(),
-                offsets_file: files[3].clone(),
-            },
-            value_dictionary_files: DictionaryFiles {
-                blocks_file: files[4].clone(),
-                offsets_file: files[5].clone(),
-            },
-
-            pos_subjects_file: files[6].clone(),
-            pos_objects_file: files[7].clone(),
-            neg_subjects_file: files[8].clone(),
-            neg_objects_file: files[9].clone(),
-
-            pos_s_p_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[10].clone(),
-                    blocks_file: files[11].clone(),
-                    sblocks_file: files[12].clone(),
-                },
-                nums_file: files[13].clone(),
-            },
-            pos_sp_o_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[14].clone(),
-                    blocks_file: files[15].clone(),
-                    sblocks_file: files[16].clone(),
-                },
-                nums_file: files[17].clone(),
-            },
-            pos_o_ps_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[18].clone(),
-                    blocks_file: files[19].clone(),
-                    sblocks_file: files[20].clone(),
-                },
-                nums_file: files[21].clone(),
-            },
-            neg_s_p_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[22].clone(),
-                    blocks_file: files[23].clone(),
-                    sblocks_file: files[24].clone(),
-                },
-                nums_file: files[25].clone(),
-            },
-            neg_sp_o_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[26].clone(),
-                    blocks_file: files[27].clone(),
-                    sblocks_file: files[28].clone(),
-                },
-                nums_file: files[29].clone(),
-            },
-            neg_o_ps_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: files[30].clone(),
-                    blocks_file: files[31].clone(),
-                    sblocks_file: files[32].clone(),
-                },
-                nums_file: files[33].clone(),
-            },
-            pos_predicate_wavelet_tree_files: BitIndexFiles {
-                bits_file: files[34].clone(),
-                blocks_file: files[35].clone(),
-                sblocks_file: files[36].clone(),
-            },
-            neg_predicate_wavelet_tree_files: BitIndexFiles {
-                bits_file: files[37].clone(),
-                blocks_file: files[38].clone(),
-                sblocks_file: files[39].clone(),
-            },
-        }
-    }
+    use crate::layer::base::tests::base_layer_files;
+    use crate::layer::child::tests::child_layer_files;
+    use futures::sync::oneshot;
+    use tokio::runtime::Runtime;
 
     fn example_base_layer() -> Arc<dyn Layer> {
         let name = [1, 2, 3, 4, 5];
-        let files = new_base_files();
+        let files = base_layer_files();
         let mut builder = SimpleLayerBuilder::new(name, files.clone());
 
         builder.add_string_triple(&StringTriple::new_value("cow", "says", "moo"));
@@ -451,7 +494,7 @@ mod tests {
     #[test]
     fn simple_child_layer_construction() {
         let base_layer = example_base_layer();
-        let files = new_child_files();
+        let files = child_layer_files();
         let name = [0, 0, 0, 0, 0];
         let mut builder = SimpleLayerBuilder::from_parent(name, base_layer.clone(), files.clone());
 
@@ -481,7 +524,7 @@ mod tests {
     fn multi_level_layers() {
         let base_layer = example_base_layer();
         let name2 = [0, 0, 0, 0, 0];
-        let files2 = new_child_files();
+        let files2 = child_layer_files();
         let mut builder =
             SimpleLayerBuilder::from_parent(name2, base_layer.clone(), files2.clone());
 
@@ -497,7 +540,7 @@ mod tests {
         );
 
         let name3 = [0, 0, 0, 0, 1];
-        let files3 = new_child_files();
+        let files3 = child_layer_files();
         builder = SimpleLayerBuilder::from_parent(name3, layer2.clone(), files3.clone());
         builder.remove_string_triple(&StringTriple::new_node("horse", "likes", "cow"));
         builder.add_string_triple(&StringTriple::new_node("horse", "likes", "pig"));
@@ -511,7 +554,7 @@ mod tests {
         );
 
         let name4 = [0, 0, 0, 0, 1];
-        let files4 = new_child_files();
+        let files4 = child_layer_files();
         builder = SimpleLayerBuilder::from_parent(name4, layer3.clone(), files4.clone());
         builder.remove_string_triple(&StringTriple::new_value("pig", "says", "oink"));
         builder.add_string_triple(&StringTriple::new_node("cow", "likes", "horse"));
@@ -530,5 +573,83 @@ mod tests {
 
         assert!(!layer4.string_triple_exists(&StringTriple::new_value("pig", "says", "oink")));
         assert!(!layer4.string_triple_exists(&StringTriple::new_node("horse", "likes", "cow")));
+    }
+
+    #[test]
+    fn concurrent_builder_build_base_layer() {
+        let runtime = Runtime::new().unwrap();
+        let files = base_layer_files();
+
+        let builder = oneshot::spawn(
+            ConcurrentLayerBuilder::new(files.clone()),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+        oneshot::spawn(
+            builder.add_string_triple(&StringTriple::new_value("cow", "says", "moo")),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+        oneshot::spawn(
+            builder.add_string_triple(&StringTriple::new_node("cow", "likes", "duck")),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+        oneshot::spawn(builder.commit(), &runtime.executor())
+            .wait()
+            .unwrap();
+
+        let layer = Arc::new(
+            BaseLayer::load_from_files([1, 2, 3, 4, 5], &files)
+                .wait()
+                .unwrap(),
+        ) as Arc<dyn Layer>;
+
+        assert!(layer.string_triple_exists(&StringTriple::new_value("cow", "says", "moo")));
+        assert!(layer.string_triple_exists(&StringTriple::new_node("cow", "likes", "duck")));
+    }
+
+    #[test]
+    fn concurrent_builder_build_base_layer_from_multiple_builders() {
+        let runtime = Runtime::new().unwrap();
+        let files = base_layer_files();
+
+        let builder = oneshot::spawn(
+            ConcurrentLayerBuilder::new(files.clone()),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+
+        let builder2 = builder.clone();
+        let builder3 = builder.clone();
+
+        oneshot::spawn(
+            builder.add_string_triple(&StringTriple::new_value("cow", "says", "moo")),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+        oneshot::spawn(
+            builder2.add_string_triple(&StringTriple::new_node("cow", "likes", "duck")),
+            &runtime.executor(),
+        )
+        .wait()
+        .unwrap();
+        oneshot::spawn(builder3.commit(), &runtime.executor())
+            .wait()
+            .unwrap();
+
+        let layer = Arc::new(
+            BaseLayer::load_from_files([1, 2, 3, 4, 5], &files)
+                .wait()
+                .unwrap(),
+        ) as Arc<dyn Layer>;
+
+        assert!(layer.string_triple_exists(&StringTriple::new_value("cow", "says", "moo")));
+        assert!(layer.string_triple_exists(&StringTriple::new_node("cow", "likes", "duck")));
     }
 }
