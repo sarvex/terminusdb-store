@@ -3,8 +3,17 @@ language: rust
 rust:
   - nightly
 
+matrix:
+  # TODO These are all the build jobs. Adjust as necessary. Comment out what you
+  # don't need
+  include:
+    - os: linux
+    - os: osx
+
+
+
 before_install:
-  - curl -L https://github.com/mozilla/grcov/releases/latest/download/grcov-linux-x86_64.tar.bz2 | tar jxf -
+  - if [[ $TRAVIS_OS_NAME = "osx" ]]; then exit; fi; curl -L https://github.com/mozilla/grcov/releases/latest/download/grcov-linux-x86_64.tar.bz2 | tar jxf -
   - rustup component add rustfmt
 
 script:
@@ -15,7 +24,7 @@ script:
     - cargo test --verbose $CARGO_OPTIONS
     - cargo fmt -- --check
     - |
-      zip -0 ccov.zip `find . \( -name "terminus*.gc*" \) -print`;
+      if [[ $TRAVIS_OS_NAME = "osx" ]]; then exit; fi; && zip -0 ccov.zip `find . \( -name "terminus*.gc*" \) -print`;
       ./grcov ccov.zip -s . -t lcov --llvm --branch --ignore-not-existing --ignore "/*" -o lcov.info;
       bash <(curl -s https://codecov.io/bash) -f lcov.info;
 notifications:
