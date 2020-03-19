@@ -19,7 +19,7 @@ before_install:
 script:
     - export CARGO_INCREMENTAL=0
     - export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads"
-      if [[ $TRAVIS_OS_NAME = "osx" ]]; then ./ci/osx_build.sh; else ./ci/linux_build.sh; fi;
+      if [[ $TRAVIS_OS_NAME = "osx" ]]; then bash ./ci/osx_build.sh; else bash ./ci/linux_build.sh; fi;
 notifications:
   irc:
     channels:
