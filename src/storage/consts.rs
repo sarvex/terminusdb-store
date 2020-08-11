@@ -8,8 +8,13 @@ pub struct Filenames {
     pub value_dictionary_blocks: &'static str,
     pub value_dictionary_offsets: &'static str,
 
-    pub node_value_remap: &'static str,
-    pub predicate_remap: &'static str,
+    pub node_value_remap_wavelet_bits: &'static str,
+    pub node_value_remap_wavelet_blocks: &'static str,
+    pub node_value_remap_wavelet_sblocks: &'static str,
+
+    pub predicate_remap_wavelet_bits: &'static str,
+    pub predicate_remap_wavelet_blocks: &'static str,
+    pub predicate_remap_wavelet_sblocks: &'static str,
 
     pub base_s_p_adjacency_list_nums: &'static str,
     pub base_s_p_adjacency_list_bits: &'static str,
@@ -87,8 +92,13 @@ pub const FILENAMES: Filenames = Filenames {
     value_dictionary_blocks: "value_dictionary_blocks.pfc",
     value_dictionary_offsets: "value_dictionary_offsets.logarray",
 
-    node_value_remap: "node_value_remap.logarray",
-    predicate_remap: "predicate_remap.logarray",
+    node_value_remap_wavelet_bits: "node_value_remap_wavelet_tree_bits.bitarray",
+    node_value_remap_wavelet_blocks: "node_value_remap_wavelet_tree_bit_index_blocks.logarray",
+    node_value_remap_wavelet_sblocks: "node_value_remap_wavelet_tree_bit_index_sblocks.logarray",
+
+    predicate_remap_wavelet_bits: "node_value_remap_wavelet_tree_bits.bitarray",
+    predicate_remap_wavelet_blocks: "node_value_remap_wavelet_tree_bit_index_blocks.logarray",
+    predicate_remap_wavelet_sblocks: "node_value_remap_wavelet_tree_bit_index_sblocks.logarray",
 
     base_s_p_adjacency_list_nums: "base_s_p_adjacency_list_nums.logarray",
     base_s_p_adjacency_list_bits: "base_s_p_adjacency_list_bits.bitarray",

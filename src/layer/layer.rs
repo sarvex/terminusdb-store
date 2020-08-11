@@ -29,7 +29,7 @@ pub trait Layer: Send + Sync {
     /// Predicate dict id of current layer
     fn predicate_dict_id(&self, predicate: &str) -> Option<u64>;
     /// Node dict id of current layer
-    fn node_dict_id(&self, subject: &str) -> Option<u64>;
+    fn node_dict_id(&self, node: &str) -> Option<u64>;
     /// Node dictionary get function
     fn node_dict_get(&self, id: usize) -> Option<String>;
     /// Node dict length of this specific layer

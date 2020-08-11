@@ -9,6 +9,7 @@ use futures::stream::Peekable;
 use super::layer::*;
 use crate::storage::*;
 use crate::structure::*;
+use crate::structure::util;
 
 use std::collections::BTreeSet;
 use std::io;
@@ -24,6 +25,8 @@ pub struct BaseLayer {
     node_dictionary: PfcDict,
     predicate_dictionary: PfcDict,
     value_dictionary: PfcDict,
+    node_value_remap_table: Option<IdRemap>,
+    predicate_remap_table: Option<IdRemap>,
     s_p_adjacency_list: AdjacencyList,
     sp_o_adjacency_list: AdjacencyList,
     o_ps_adjacency_list: AdjacencyList,
@@ -55,6 +58,26 @@ impl BaseLayer {
             maps.value_dictionary_maps.offsets_map,
         )
         .unwrap();
+
+        let node_value_width = util::width_from_count(node_dictionary.len() + value_dictionary.len());
+        let node_value_remap_table = maps.node_value_remap_maps
+            .map(|maps| WaveletTree::from_parts(
+                BitIndex::from_maps(
+                    maps.bits_map,
+                    maps.blocks_map,
+                    maps.sblocks_map),
+                node_value_width))
+            .map(|wtree| IdRemap::from_parts(wtree));
+
+        let predicate_width = util::width_from_count(predicate_dictionary.len());
+        let predicate_remap_table = maps.predicate_remap_maps
+            .map(|maps| WaveletTree::from_parts(
+                BitIndex::from_maps(
+                    maps.bits_map,
+                    maps.blocks_map,
+                    maps.sblocks_map),
+                predicate_width))
+            .map(|wtree| IdRemap::from_parts(wtree));
 
         let s_p_adjacency_list = AdjacencyList::parse(
             maps.s_p_adjacency_list_maps.nums_map,
@@ -90,6 +113,9 @@ impl BaseLayer {
             node_dictionary,
             predicate_dictionary,
             value_dictionary,
+
+            node_value_remap_table,
+            predicate_remap_table,
 
             s_p_adjacency_list,
             sp_o_adjacency_list,
@@ -171,21 +197,43 @@ impl Layer for BaseLayer {
     }
 
     fn subject_id(&self, subject: &str) -> Option<u64> {
-        self.node_dictionary.id(subject).map(|id| id + 1)
+        self.node_dictionary.id(subject)
+            .map(|remapped_id| 
+                 self.node_value_remap_table.as_ref()
+                 .and_then(|table| table.remapped_to_original(remapped_id))
+                 .unwrap_or(remapped_id))
+            .map(|id| id + 1)
     }
 
     fn predicate_id(&self, predicate: &str) -> Option<u64> {
-        self.predicate_dictionary.id(predicate).map(|id| id + 1)
+        self.predicate_dictionary.id(predicate)
+            .map(|remapped_id| 
+                 self.predicate_remap_table.as_ref()
+                 .and_then(|table| table.remapped_to_original(remapped_id))
+                 .unwrap_or(remapped_id))
+            .map(|id| id + 1)
     }
 
     fn object_node_id(&self, object: &str) -> Option<u64> {
-        self.node_dictionary.id(object).map(|id| id + 1)
+        self.node_dictionary.id(object)
+            .map(|remapped_id| 
+                 self.node_value_remap_table.as_ref()
+                 .and_then(|table| table.remapped_to_original(remapped_id))
+                 .unwrap_or(remapped_id))
+            .map(|id| id + 1)
     }
 
     fn object_value_id(&self, value: &str) -> Option<u64> {
         self.value_dictionary
             .id(value)
-            .map(|id| id + self.node_dictionary.len() as u64 + 1)
+            .map(|unoffsetted_remapped_id| {
+                let remapped_id = unoffsetted_remapped_id + self.node_dictionary.len() as u64;
+                
+                self.node_value_remap_table.as_ref()
+                    .and_then(|table| table.remapped_to_original(remapped_id))
+                    .unwrap_or(remapped_id)
+            })
+            .map(|id| id + 1)
     }
 
     fn id_subject(&self, id: u64) -> Option<String> {
@@ -193,7 +241,10 @@ impl Layer for BaseLayer {
             return None;
         }
         let corrected_id = id - 1;
-        self.node_dict_get(corrected_id as usize)
+        let remapped_id = self.node_value_remap_table.as_ref()
+            .and_then(|table| table.original_to_remapped(corrected_id))
+            .unwrap_or(corrected_id);
+        self.node_dict_get(remapped_id as usize)
     }
 
     fn id_predicate(&self, id: u64) -> Option<String> {
@@ -201,7 +252,10 @@ impl Layer for BaseLayer {
             return None;
         }
         let corrected_id = id - 1;
-        self.predicate_dict_get(corrected_id as usize)
+        let remapped_id = self.predicate_remap_table.as_ref()
+            .and_then(|table| table.original_to_remapped(corrected_id))
+            .unwrap_or(corrected_id);
+        self.predicate_dict_get(remapped_id as usize)
     }
 
     fn id_object(&self, id: u64) -> Option<ObjectType> {
@@ -209,13 +263,16 @@ impl Layer for BaseLayer {
             return None;
         }
         let corrected_id = id - 1;
+        let remapped_id = self.node_value_remap_table.as_ref()
+            .and_then(|table| table.original_to_remapped(corrected_id))
+            .unwrap_or(corrected_id);
 
-        if corrected_id >= (self.node_dictionary.len() as u64) {
-            let val_id = corrected_id - (self.node_dictionary.len() as u64);
+        if remapped_id >= (self.node_dictionary.len() as u64) {
+            let val_id = remapped_id - (self.node_dictionary.len() as u64);
             self.value_dict_get(val_id as usize).map(ObjectType::Value)
         } else {
             self.node_dictionary
-                .get(corrected_id as usize)
+                .get(remapped_id as usize)
                 .map(ObjectType::Node)
         }
     }
@@ -1047,49 +1104,7 @@ pub mod tests {
     use crate::storage::memory::*;
 
     pub fn base_layer_files() -> BaseLayerFiles<MemoryBackedStore> {
-        BaseLayerFiles {
-            node_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            predicate_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            value_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            s_p_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            sp_o_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            o_ps_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            predicate_wavelet_tree_files: BitIndexFiles {
-                bits_file: MemoryBackedStore::new(),
-                blocks_file: MemoryBackedStore::new(),
-                sblocks_file: MemoryBackedStore::new(),
-            },
-        }
+        create_memory_base_layer_files()
     }
 
     pub fn example_base_layer_files() -> BaseLayerFiles<MemoryBackedStore> {

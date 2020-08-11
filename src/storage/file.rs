@@ -54,6 +54,9 @@ pub struct BaseLayerFiles<F: 'static + FileLoad + FileStore> {
     pub predicate_dictionary_files: DictionaryFiles<F>,
     pub value_dictionary_files: DictionaryFiles<F>,
 
+    pub node_value_remap_files: BitIndexFiles<F>,
+    pub predicate_remap_files: BitIndexFiles<F>,
+
     pub s_p_adjacency_list_files: AdjacencyListFiles<F>,
     pub sp_o_adjacency_list_files: AdjacencyListFiles<F>,
 
@@ -67,6 +70,9 @@ pub struct BaseLayerMaps {
     pub node_dictionary_maps: DictionaryMaps,
     pub predicate_dictionary_maps: DictionaryMaps,
     pub value_dictionary_maps: DictionaryMaps,
+
+    pub node_value_remap_maps: Option<BitIndexMaps>,
+    pub predicate_remap_maps: Option<BitIndexMaps>,
 
     pub s_p_adjacency_list_maps: AdjacencyListMaps,
     pub sp_o_adjacency_list_maps: AdjacencyListMaps,
@@ -84,6 +90,11 @@ impl<F: FileLoad + FileStore> BaseLayerFiles<F> {
             self.value_dictionary_files.map_all(),
         ];
 
+        let remap_futs = vec![
+            self.node_value_remap_files.map_all_if_exists(),
+            self.predicate_remap_files.map_all_if_exists(),
+        ];
+
         let aj_futs = vec![
             self.s_p_adjacency_list_files.map_all(),
             self.sp_o_adjacency_list_files.map_all(),
@@ -91,13 +102,17 @@ impl<F: FileLoad + FileStore> BaseLayerFiles<F> {
         ];
 
         future::join_all(dict_futs)
+            .join(future::join_all(remap_futs))
             .join(future::join_all(aj_futs))
             .join(self.predicate_wavelet_tree_files.map_all())
             .map(
-                |((dict_results, aj_results), predicate_wavelet_tree_maps)| BaseLayerMaps {
+                |(((dict_results, remap_results), aj_results), predicate_wavelet_tree_maps)| BaseLayerMaps {
                     node_dictionary_maps: dict_results[0].clone(),
                     predicate_dictionary_maps: dict_results[1].clone(),
                     value_dictionary_maps: dict_results[2].clone(),
+
+                    node_value_remap_maps: remap_results[0].clone(),
+                    predicate_remap_maps: remap_results[1].clone(),
 
                     s_p_adjacency_list_maps: aj_results[0].clone(),
                     sp_o_adjacency_list_maps: aj_results[1].clone(),
@@ -228,7 +243,6 @@ pub struct AdjacencyListMaps {
 pub struct DictionaryFiles<F: 'static + FileLoad + FileStore> {
     pub blocks_file: F,
     pub offsets_file: F,
-//    pub map_files: Option<BitIndexFiles<F>>
 }
 
 impl<F: 'static + FileLoad + FileStore> DictionaryFiles<F> {
@@ -274,6 +288,15 @@ pub struct BitIndexFiles<F: 'static + FileLoad + FileStore> {
 }
 
 impl<F: 'static + FileLoad + FileStore> BitIndexFiles<F> {
+    pub fn map_all_if_exists(&self) -> impl Future<Item = Option<BitIndexMaps>, Error = std::io::Error> {
+        if self.bits_file.exists() {
+            future::Either::A(self.map_all()
+                              .map(|result| Some(result)))
+        }
+        else {
+            future::Either::B(future::ok(None))
+        }
+    }
     pub fn map_all(&self) -> impl Future<Item = BitIndexMaps, Error = std::io::Error> {
         let futs = vec![
             self.bits_file.map(),

@@ -92,6 +92,10 @@ pub fn sorted_stream<T,E,S:'static+Stream<Item=T,Error=E>+Send, F:'static+Fn(&[O
     }
 }
 
+pub fn width_from_count(count: usize) -> u8 {
+    (count as f32).log2().ceil() as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

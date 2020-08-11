@@ -123,6 +123,62 @@ impl FileLoad for MemoryBackedStore {
     }
 }
 
+pub fn create_memory_base_layer_files() -> BaseLayerFiles<MemoryBackedStore> {
+    BaseLayerFiles {
+        node_dictionary_files: DictionaryFiles {
+            blocks_file: MemoryBackedStore::new(),
+            offsets_file: MemoryBackedStore::new(),
+        },
+        predicate_dictionary_files: DictionaryFiles {
+            blocks_file: MemoryBackedStore::new(),
+            offsets_file: MemoryBackedStore::new(),
+        },
+        value_dictionary_files: DictionaryFiles {
+            blocks_file: MemoryBackedStore::new(),
+            offsets_file: MemoryBackedStore::new(),
+        },
+        node_value_remap_files: BitIndexFiles {
+            bits_file: MemoryBackedStore::new(),
+            blocks_file: MemoryBackedStore::new(),
+            sblocks_file: MemoryBackedStore::new()
+        },
+        predicate_remap_files: BitIndexFiles {
+            bits_file: MemoryBackedStore::new(),
+            blocks_file: MemoryBackedStore::new(),
+            sblocks_file: MemoryBackedStore::new()
+        },
+        s_p_adjacency_list_files: AdjacencyListFiles {
+            bitindex_files: BitIndexFiles {
+                bits_file: MemoryBackedStore::new(),
+                blocks_file: MemoryBackedStore::new(),
+                sblocks_file: MemoryBackedStore::new(),
+            },
+            nums_file: MemoryBackedStore::new(),
+        },
+        sp_o_adjacency_list_files: AdjacencyListFiles {
+            bitindex_files: BitIndexFiles {
+                bits_file: MemoryBackedStore::new(),
+                blocks_file: MemoryBackedStore::new(),
+                sblocks_file: MemoryBackedStore::new(),
+            },
+            nums_file: MemoryBackedStore::new(),
+        },
+        o_ps_adjacency_list_files: AdjacencyListFiles {
+            bitindex_files: BitIndexFiles {
+                bits_file: MemoryBackedStore::new(),
+                blocks_file: MemoryBackedStore::new(),
+                sblocks_file: MemoryBackedStore::new(),
+            },
+            nums_file: MemoryBackedStore::new(),
+        },
+        predicate_wavelet_tree_files: BitIndexFiles {
+            bits_file: MemoryBackedStore::new(),
+            blocks_file: MemoryBackedStore::new(),
+            sblocks_file: MemoryBackedStore::new(),
+        },
+    }
+}
+
 #[derive(Clone)]
 pub struct MemoryLayerStore {
     layers:
@@ -245,49 +301,7 @@ impl LayerStore for MemoryLayerStore {
         &self,
     ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
         let name = rand::random();
-        let blf = BaseLayerFiles {
-            node_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            predicate_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            value_dictionary_files: DictionaryFiles {
-                blocks_file: MemoryBackedStore::new(),
-                offsets_file: MemoryBackedStore::new(),
-            },
-            s_p_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            sp_o_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            o_ps_adjacency_list_files: AdjacencyListFiles {
-                bitindex_files: BitIndexFiles {
-                    bits_file: MemoryBackedStore::new(),
-                    blocks_file: MemoryBackedStore::new(),
-                    sblocks_file: MemoryBackedStore::new(),
-                },
-                nums_file: MemoryBackedStore::new(),
-            },
-            predicate_wavelet_tree_files: BitIndexFiles {
-                bits_file: MemoryBackedStore::new(),
-                blocks_file: MemoryBackedStore::new(),
-                sblocks_file: MemoryBackedStore::new(),
-            },
-        };
+        let blf = create_memory_base_layer_files();
 
         Box::new(self.layers.write().then(move |layers| {
             layers

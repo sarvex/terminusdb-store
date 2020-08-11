@@ -6,6 +6,7 @@
 mod base;
 mod builder;
 mod child;
+mod rollup;
 mod layer;
 
 pub use base::*;

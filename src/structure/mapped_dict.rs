@@ -9,6 +9,43 @@ use crate::storage::*;
 use super::util::*;
 use super::bitindex::*;
 
+#[derive(Clone)]
+pub struct IdRemap {
+    id_wtree: WaveletTree
+}
+
+impl IdRemap {
+    pub fn from_parts(id_wtree: WaveletTree) -> Self {
+        Self {
+            id_wtree
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.id_wtree.len()
+    }
+
+    pub fn original_to_remapped(&self, index: u64) -> Option<u64> {
+        if index < self.len() as u64 {
+            self.id_wtree.lookup_one(index)
+        }
+        else {
+            None
+        }
+
+    }
+
+    pub fn remapped_to_original(&self, index: u64) -> Option<u64> {
+        if index < self.len() as u64 {
+            Some(self.id_wtree.decode_one(index as usize))
+        }
+        else {
+            None
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct MappedPfcDict {
     inner: PfcDict,
     id_wtree: Option<WaveletTree>
@@ -66,7 +103,7 @@ pub fn merge_dictionary_stack<F:'static+FileLoad+FileStore>(stack: Vec<(F,Option
                         },
                         Some(remap) => {
                             future::Either::B(dict_file_get_count(file.clone())
-                                              .map(|count| (count as f32).log2().ceil() as u8)
+                                              .map(|count| width_from_count(count as usize))
                                               .and_then(move |width| future::join_all(vec![remap.bits_file.map(), remap.blocks_file.map(), remap.sblocks_file.map()])
                                                         .map(|maps| BitIndex::from_maps(maps[0].clone(), maps[1].clone(), maps[2].clone()))
                                                         .map(move |bi| WaveletTree::from_parts(bi, width)))
