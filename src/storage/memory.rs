@@ -4,8 +4,11 @@ use bytes::Bytes;
 use futures_locks;
 use std::collections::HashMap;
 use std::io;
+use std::io::*;
 use std::sync::{self, Arc, RwLock};
 use tokio::prelude::*;
+use futures::prelude::*;
+use futures::task::Poll;
 
 use super::*;
 use crate::layer::{BaseLayer, ChildLayer, InternalLayer, Layer, LayerBuilder, SimpleLayerBuilder};
@@ -34,9 +37,9 @@ impl Write for MemoryBackedStoreWriter {
     }
 }
 
-impl AsyncWrite for MemoryBackedStoreWriter {
-    fn shutdown(&mut self) -> Result<Async<()>, io::Error> {
-        Ok(Async::Ready(()))
+impl tokio::io::AsyncWrite for MemoryBackedStoreWriter {
+    fn poll_shutdown(&mut self) -> Poll<Result<(), io::Error>> {
+        Ok(Poll::Ready(()))
     }
 }
 
@@ -68,7 +71,7 @@ impl Read for MemoryBackedStoreReader {
     }
 }
 
-impl AsyncRead for MemoryBackedStoreReader {}
+impl tokio::io::AsyncRead for MemoryBackedStoreReader {}
 
 #[derive(Clone)]
 pub struct MemoryBackedStore {
@@ -115,7 +118,7 @@ impl FileLoad for MemoryBackedStore {
         }
     }
 
-    fn map(&self) -> Box<dyn Future<Item = Bytes, Error = std::io::Error> + Send> {
+    fn map(&self) -> Box<dyn Future<Output = Result<Bytes, std::io::Error>> + Send> {
         let vec = self.vec.clone();
         Box::new(future::lazy(move || {
             future::ok(Bytes::from(vec.read().unwrap().clone()))
@@ -138,7 +141,7 @@ impl MemoryLayerStore {
 }
 
 impl LayerStore for MemoryLayerStore {
-    fn layers(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send> {
+    fn layers(&self) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, io::Error>> + Send> {
         Box::new(self.layers.read().then(|layers| {
             Ok(layers
                 .expect("rwlock read cannot fail")
@@ -152,7 +155,7 @@ impl LayerStore for MemoryLayerStore {
         &self,
         name: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send> {
         if let Some(layer) = cache.get_layer_from_cache(name) {
             return Box::new(future::ok(Some(layer as Arc<dyn Layer>)));
         }
@@ -251,7 +254,7 @@ impl LayerStore for MemoryLayerStore {
 
     fn create_base_layer(
         &self,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         let name = rand::random();
         let blf = BaseLayerFiles {
             node_dictionary_files: DictionaryFiles {
@@ -313,7 +316,7 @@ impl LayerStore for MemoryLayerStore {
         &self,
         parent: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         let layers = self.layers.clone();
         Box::new(
             self.get_layer_with_cache(parent, cache)
@@ -433,7 +436,7 @@ impl LayerStore for MemoryLayerStore {
         &self,
         descendant: [u32; 5],
         ancestor: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send> {
         Box::new(
             self.layers
                 .read()
@@ -469,7 +472,7 @@ impl MemoryLabelStore {
 }
 
 impl LabelStore for MemoryLabelStore {
-    fn labels(&self) -> Box<dyn Future<Item = Vec<Label>, Error = std::io::Error> + Send> {
+    fn labels(&self) -> Box<dyn Future<Output = Result<Vec<Label>, std::io::Error>> + Send> {
         Box::new(self.labels.read().then(|l| {
             Ok(l.expect("rwlock read should always succeed")
                 .values()
@@ -481,7 +484,7 @@ impl LabelStore for MemoryLabelStore {
     fn create_label(
         &self,
         name: &str,
-    ) -> Box<dyn Future<Item = Label, Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Label, std::io::Error>> + Send> {
         let label = Label::new_empty(name);
 
         Box::new(self.labels.write().then(move |l| {
@@ -501,7 +504,7 @@ impl LabelStore for MemoryLabelStore {
     fn get_label(
         &self,
         name: &str,
-    ) -> Box<dyn Future<Item = Option<Label>, Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Label>, std::io::Error>> + Send> {
         let name = name.to_owned();
         Box::new(self.labels.read().then(move |l| {
             Ok(l.expect("rwlock read should always succeed")
@@ -514,7 +517,7 @@ impl LabelStore for MemoryLabelStore {
         &self,
         label: &Label,
         layer: Option<[u32; 5]>,
-    ) -> Box<dyn Future<Item = Option<Label>, Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Label>, std::io::Error>> + Send> {
         let new_label = label.with_updated_layer(layer);
 
         Box::new(self.labels.write().then(move |l| {

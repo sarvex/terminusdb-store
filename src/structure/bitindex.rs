@@ -313,14 +313,14 @@ impl BitIndex {
 }
 
 pub fn build_bitindex<
-    R: 'static + AsyncRead + Send,
-    W1: 'static + AsyncWrite + Send,
-    W2: 'static + AsyncWrite + Send,
+    R: 'static + tokio::io::AsyncRead + Send,
+    W1: 'static + tokio::io::AsyncWrite + Send,
+    W2: 'static + tokio::io::AsyncWrite + Send,
 >(
     bitarray: R,
     blocks: W1,
     sblocks: W2,
-) -> Box<dyn Future<Item = (W1, W2), Error = std::io::Error> + Send> {
+) -> Box<dyn Future<Output = Result<(W1, W2), std::io::Error>> + Send> {
     let block_stream = bitarray_stream_blocks(bitarray);
     // the following widths are unoptimized, but should always be large enough
     let blocks_builder =

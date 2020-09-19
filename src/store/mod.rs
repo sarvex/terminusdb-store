@@ -36,7 +36,7 @@ pub struct StoreLayerBuilder {
 }
 
 impl StoreLayerBuilder {
-    fn new(store: Store) -> impl Future<Item = Self, Error = io::Error> + Send {
+    fn new(store: Store) -> impl Future<Output = Result<Self, io::Error>> + Send {
         store.layer_store.create_base_layer().map(|builder| Self {
             name: builder.name(),
             builder: RwLock::new(Some(builder)),
@@ -103,7 +103,7 @@ impl StoreLayerBuilder {
     }
 
     /// Commit the layer to storage without loading the resulting layer
-    pub fn commit_no_load(&self) -> impl Future<Item = (), Error = std::io::Error> + Send {
+    pub fn commit_no_load(&self) -> impl Future<Output = Result<(), std::io::Error>> + Send {
         let mut guard = self
             .builder
             .write()
@@ -123,7 +123,7 @@ impl StoreLayerBuilder {
     }
 
     /// Commit the layer to storage
-    pub fn commit(&self) -> impl Future<Item = StoreLayer, Error = std::io::Error> + Send {
+    pub fn commit(&self) -> impl Future<Output = Result<StoreLayer, std::io::Error>> + Send {
         let store = self.store.clone();
         let name = self.name;
         self.commit_no_load()
@@ -175,7 +175,7 @@ impl StoreLayer {
     }
 
     /// Create a layer builder based on this layer
-    pub fn open_write(&self) -> impl Future<Item = StoreLayerBuilder, Error = io::Error> + Send {
+    pub fn open_write(&self) -> impl Future<Output = Result<StoreLayerBuilder, io::Error>> + Send {
         let store = self.store.clone();
         self.store
             .layer_store
@@ -183,7 +183,7 @@ impl StoreLayer {
             .map(move |layer| StoreLayerBuilder::wrap(layer, store))
     }
 
-    pub fn parent(&self) -> Box<dyn Future<Item = Option<StoreLayer>, Error = io::Error> + Send> {
+    pub fn parent(&self) -> Box<dyn Future<Output = Result<Option<StoreLayer>, io::Error>> + Send> {
         let parent_name = self.layer.parent_name();
 
         let store = self.store.clone();
@@ -199,7 +199,7 @@ impl StoreLayer {
         })
     }
 
-    pub fn squash(&self) -> impl Future<Item = StoreLayer, Error = io::Error> + Send {
+    pub fn squash(&self) -> impl Future<Output = Result<StoreLayer, io::Error>> + Send {
         let self_clone = self.clone();
 
         // TODO check if we already committed
@@ -465,7 +465,7 @@ impl NamedGraph {
     }
 
     /// Returns the layer this database points at
-    pub fn head(&self) -> impl Future<Item = Option<StoreLayer>, Error = io::Error> + Send {
+    pub fn head(&self) -> impl Future<Output = Result<Option<StoreLayer>, io::Error>> + Send {
         let store = self.store.clone();
         store
             .label_store
@@ -476,7 +476,7 @@ impl NamedGraph {
                     "database not found",
                 ))),
                 Some(new_label) => {
-                    let result: Box<dyn Future<Item = _, Error = _> + Send> = match new_label.layer
+                    let result: Box<dyn Future<Output = Result<_, _>> + Send> = match new_label.layer
                     {
                         None => Box::new(future::ok(None)),
                         Some(layer) => {
@@ -494,7 +494,7 @@ impl NamedGraph {
     pub fn set_head(
         &self,
         layer: &StoreLayer,
-    ) -> impl Future<Item = bool, Error = io::Error> + Send {
+    ) -> impl Future<Output = Result<bool, io::Error>> + Send {
         let store = self.store.clone();
         let store2 = self.store.clone();
         let layer_name = layer.name();
@@ -503,14 +503,14 @@ impl NamedGraph {
             .label_store
             .get_label(&self.label)
             .and_then(move |label| {
-                let result: Box<dyn Future<Item = _, Error = _> + Send> = match label {
+                let result: Box<dyn Future<Output = Result<_, _>> + Send> = match label {
                     None => Box::new(future::err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "label not found",
                     ))),
                     Some(label) => Box::new(
                         {
-                            let result: Box<dyn Future<Item = _, Error = _> + Send> = match label
+                            let result: Box<dyn Future<Output = Result<_, _>> + Send> = match label
                                 .layer
                             {
                                 None => Box::new(future::ok(true)),
@@ -532,7 +532,7 @@ impl NamedGraph {
                             result
                         }
                         .and_then(move |b| {
-                            let result: Box<dyn Future<Item = _, Error = _> + Send> = if b {
+                            let result: Box<dyn Future<Output = Result<_, _>> + Send> = if b {
                                 Box::new(
                                     store2
                                         .label_store
@@ -555,14 +555,14 @@ impl NamedGraph {
     pub fn force_set_head(
         &self,
         layer: &StoreLayer,
-    ) -> impl Future<Item = bool, Error = io::Error> + Send {
+    ) -> impl Future<Output = Result<bool, io::Error>> + Send {
         let store = self.store.clone();
         let layer_name = layer.name();
         store
             .label_store
             .get_label(&self.label)
             .and_then(move |label| {
-                let result: Box<dyn Future<Item = _, Error = _> + Send> = match label {
+                let result: Box<dyn Future<Output = Result<_, _>> + Send> = match label {
                     None => Box::new(future::err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "label not found",
@@ -604,7 +604,7 @@ impl Store {
     pub fn create(
         &self,
         label: &str,
-    ) -> impl Future<Item = NamedGraph, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<NamedGraph, std::io::Error>> + Send {
         let store = self.clone();
         self.label_store
             .create_label(label)
@@ -615,7 +615,7 @@ impl Store {
     pub fn open(
         &self,
         label: &str,
-    ) -> impl Future<Item = Option<NamedGraph>, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<Option<NamedGraph>, std::io::Error>> {
         let store = self.clone();
         self.label_store
             .get_label(label)
@@ -625,7 +625,7 @@ impl Store {
     pub fn get_layer_from_id(
         &self,
         layer: [u32; 5],
-    ) -> impl Future<Item = Option<StoreLayer>, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<Option<StoreLayer>, std::io::Error>> {
         let store = self.clone();
         self.layer_store
             .get_layer(layer)
@@ -637,7 +637,7 @@ impl Store {
     /// After having committed it, use `set_head` on a `NamedGraph` to attach it.
     pub fn create_base_layer(
         &self,
-    ) -> impl Future<Item = StoreLayerBuilder, Error = io::Error> + Send {
+    ) -> impl Future<Output = Result<StoreLayerBuilder, io::Error>> + Send {
         StoreLayerBuilder::new(self.clone())
     }
 

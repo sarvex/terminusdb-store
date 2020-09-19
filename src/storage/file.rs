@@ -5,7 +5,7 @@ use futures::prelude::*;
 use tokio::prelude::*;
 
 pub trait FileStore: Clone + Send + Sync {
-    type Write: AsyncWrite + Send;
+    type Write: tokio::io::AsyncWrite + Send;
     fn open_write(&self) -> Self::Write {
         self.open_write_from(0)
     }
@@ -13,7 +13,7 @@ pub trait FileStore: Clone + Send + Sync {
 }
 
 pub trait FileLoad: Clone + Send + Sync {
-    type Read: AsyncRead + Send;
+    type Read: tokio::io::AsyncRead + Send;
 
     // TODO - exists and size should also be future-enabled
     fn exists(&self) -> bool;
@@ -22,11 +22,11 @@ pub trait FileLoad: Clone + Send + Sync {
         self.open_read_from(0)
     }
     fn open_read_from(&self, offset: usize) -> Self::Read;
-    fn map(&self) -> Box<dyn Future<Item = Bytes, Error = std::io::Error> + Send>;
+    fn map(&self) -> Box<dyn Future<Output = Result<Bytes, std::io::Error>> + Send>;
 
     fn map_if_exists(
         &self,
-    ) -> Box<dyn Future<Item = Option<Bytes>, Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Bytes>, std::io::Error>> + Send> {
         Box::new(match self.exists() {
             false => future::Either::A(future::ok(None)),
             true => future::Either::B(self.map().map(|m| Some(m))),
@@ -92,7 +92,7 @@ pub struct BaseLayerMaps {
 }
 
 impl<F: FileLoad + FileStore> BaseLayerFiles<F> {
-    pub fn map_all(&self) -> impl Future<Item = BaseLayerMaps, Error = std::io::Error> {
+    pub fn map_all(&self) -> impl Future<Output = Result<BaseLayerMaps, std::io::Error>> {
         let dict_futs = vec![
             self.node_dictionary_files.map_all(),
             self.predicate_dictionary_files.map_all(),
@@ -181,7 +181,7 @@ pub struct ChildLayerMaps {
 }
 
 impl<F: FileLoad + FileStore + Clone> ChildLayerFiles<F> {
-    pub fn map_all(&self) -> impl Future<Item = ChildLayerMaps, Error = std::io::Error> {
+    pub fn map_all(&self) -> impl Future<Output = Result<ChildLayerMaps, std::io::Error>> {
         let dict_futs = vec![
             self.node_dictionary_files.map_all(),
             self.predicate_dictionary_files.map_all(),

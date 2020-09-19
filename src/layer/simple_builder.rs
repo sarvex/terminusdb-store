@@ -36,9 +36,9 @@ pub trait LayerBuilder: Send + Sync {
     /// Remove an id triple
     fn remove_id_triple(&mut self, triple: IdTriple);
     /// Commit the layer to storage
-    fn commit(self) -> Box<dyn Future<Item = (), Error = std::io::Error> + Send>;
+    fn commit(self) -> Box<dyn Future<Output = Result<(), std::io::Error>> + Send>;
     /// Commit a boxed layer to storage
-    fn commit_boxed(self: Box<Self>) -> Box<dyn Future<Item = (), Error = std::io::Error> + Send>;
+    fn commit_boxed(self: Box<Self>) -> Box<dyn Future<Output = Result<(), std::io::Error>> + Send>;
 }
 
 /// A layer builder
@@ -109,7 +109,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> LayerBuilder for SimpleLayerBuil
         }
     }
 
-    fn commit(self) -> Box<dyn Future<Item = (), Error = std::io::Error> + Send> {
+    fn commit(self) -> Box<dyn Future<Output = Result<(), std::io::Error>> + Send> {
         let parent = self.parent.clone();
         let mut additions: Vec<_> = match parent {
             None => self
@@ -329,7 +329,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> LayerBuilder for SimpleLayerBuil
         }
     }
 
-    fn commit_boxed(self: Box<Self>) -> Box<dyn Future<Item = (), Error = std::io::Error> + Send> {
+    fn commit_boxed(self: Box<Self>) -> Box<dyn Future<Output = Result<(), std::io::Error>> + Send> {
         let builder = *self;
         builder.commit()
     }

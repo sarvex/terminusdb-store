@@ -5,7 +5,7 @@
 //! without any futures.
 use futures::future;
 use futures::prelude::*;
-use futures::sync::oneshot;
+use futures::channel::oneshot;
 use tokio::runtime::Runtime;
 
 use std::io;
@@ -29,7 +29,7 @@ lazy_static! {
 /// directly on the async api functions resulted in a memory leak in
 /// tokio_threadpool. Spawning the future indirectly appears to work
 /// without memory leak.
-fn task_sync<T: 'static + Send, F: 'static + Future<Item = T, Error = io::Error> + Send>(
+fn task_sync<T: 'static + Send, F: 'static + Future<Output = Result<T, io::Error>> + Send>(
     future: F,
 ) -> Result<T, io::Error> {
     let (tx, rx) = oneshot::channel();

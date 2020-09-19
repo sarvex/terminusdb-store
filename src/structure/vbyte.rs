@@ -16,7 +16,7 @@
 
 use futures::prelude::*;
 use std::io::Error;
-use tokio::io::{write_all, AsyncWrite};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// The maximum number of bytes required for any `u64` in a variable-byte encoding.
 pub const MAX_ENCODING_LEN: usize = 10;
@@ -166,7 +166,7 @@ pub fn encode_vec(num: u64) -> Vec<u8> {
 
 /// Encodes a `u64` with a variable-byte encoding in a `Vec` and writes that `Vec` to the
 /// destination `dest` in a future.
-pub fn write_async<A>(dest: A, num: u64) -> Box<dyn Future<Item = (A, usize), Error = Error> + Send>
+pub fn write_async<A>(dest: A, num: u64) -> Box<dyn Future<Output = Result<(A, usize), Error>> + Send>
 where
     A: 'static + AsyncWrite + Send,
 {

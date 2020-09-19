@@ -35,10 +35,8 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use std::{convert::TryFrom, error, fmt, io};
-use tokio::{
-    codec::{Decoder, FramedRead},
-    prelude::*,
-};
+use tokio_util::codec::{Decoder, FramedRead};
+use tokio::prelude::*;
 
 /// A thread-safe, reference-counted, compressed bit sequence.
 ///
@@ -209,7 +207,7 @@ pub struct BitArrayFileBuilder<W> {
     count: u64,
 }
 
-impl<W: AsyncWrite> BitArrayFileBuilder<W> {
+impl<W: tokio::io::AsyncWrite> BitArrayFileBuilder<W> {
     pub fn new(dest: W) -> BitArrayFileBuilder<W> {
         BitArrayFileBuilder {
             dest,
@@ -218,7 +216,7 @@ impl<W: AsyncWrite> BitArrayFileBuilder<W> {
         }
     }
 
-    pub fn push(self, bit: bool) -> impl Future<Item = BitArrayFileBuilder<W>, Error = io::Error> {
+    pub fn push(self, bit: bool) -> impl Future<Output = Result<BitArrayFileBuilder<W>, io::Error>> {
         let BitArrayFileBuilder {
             current,
             count,
@@ -258,14 +256,14 @@ impl<W: AsyncWrite> BitArrayFileBuilder<W> {
         }
     }
 
-    pub fn push_all<S: Stream<Item = bool, Error = io::Error>>(
+    pub fn push_all<S: Stream<Item = Result<bool, io::Error>>>(
         self,
         stream: S,
-    ) -> impl Future<Item = BitArrayFileBuilder<W>, Error = io::Error> {
+    ) -> impl Future<Output = Result<BitArrayFileBuilder<W>, io::Error>> {
         stream.fold(self, |builder, bit| builder.push(bit))
     }
 
-    fn finalize_data(self) -> impl Future<Item = W, Error = io::Error> {
+    fn finalize_data(self) -> impl Future<Output = Result<W, io::Error>> {
         let BitArrayFileBuilder {
             current,
             count,
@@ -278,7 +276,7 @@ impl<W: AsyncWrite> BitArrayFileBuilder<W> {
         }
     }
 
-    pub fn finalize(self) -> impl Future<Item = W, Error = io::Error> {
+    pub fn finalize(self) -> impl Future<Output = Result<W, io::Error>> {
         let count = self.count;
         // Write the final data word.
         self.finalize_data()
@@ -328,17 +326,17 @@ impl Decoder for BitArrayBlockDecoder {
     }
 }
 
-pub fn bitarray_stream_blocks<R: AsyncRead>(r: R) -> FramedRead<R, BitArrayBlockDecoder> {
+pub fn bitarray_stream_blocks<R: tokio::io::AsyncRead>(r: R) -> FramedRead<R, BitArrayBlockDecoder> {
     FramedRead::new(r, BitArrayBlockDecoder { readahead: None })
 }
 
 /// Read the length (number of bits) from a `FileLoad`.
-fn bitarray_len_from_file<F: FileLoad>(f: F) -> impl Future<Item = (F, u64), Error = io::Error> {
+fn bitarray_len_from_file<F: FileLoad>(f: F) -> impl Future<Output = Result<(F, u64), io::Error>> {
     BitArrayError::validate_input_buf_size(f.size())
         .map_or_else(|e| Err(e.into()), |_| Ok(f))
         .into_future()
         .and_then(|f| {
-            tokio::io::read_exact(f.open_read_from(f.size() - 8), [0; 8]).map(|(_, buf)| (f, buf))
+            f.open_read_from(f.size() - 8).read_exact([0; 8]).map(|(_, buf)| (f, buf))
         })
         .and_then(|(f, control_word)| {
             read_control_word(&control_word, f.size())
@@ -347,7 +345,7 @@ fn bitarray_len_from_file<F: FileLoad>(f: F) -> impl Future<Item = (F, u64), Err
         })
 }
 
-pub fn bitarray_stream_bits<F: FileLoad>(f: F) -> impl Stream<Item = bool, Error = io::Error> {
+pub fn bitarray_stream_bits<F: FileLoad>(f: F) -> impl Stream<Item = Result<bool, io::Error>> {
     // Read the length.
     bitarray_len_from_file(f)
         .into_stream()

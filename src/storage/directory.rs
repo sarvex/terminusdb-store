@@ -58,7 +58,7 @@ impl FileLoad for FileBackedStore {
         File::from_std(f)
     }
 
-    fn map(&self) -> Box<dyn Future<Item = Bytes, Error = std::io::Error> + Send> {
+    fn map(&self) -> Box<dyn Future<Output = Result<Bytes, std::io::Error>> + Send> {
         let file = self.clone();
         Box::new(future::lazy(move || {
             if file.size() == 0 {
@@ -101,7 +101,7 @@ impl DirectoryLayerStore {
 
 impl PersistentLayerStore for DirectoryLayerStore {
     type File = FileBackedStore;
-    fn directories(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send> {
+    fn directories(&self) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, io::Error>> + Send> {
         Box::new(
             fs::read_dir(self.path.clone())
                 .flatten_stream()
@@ -128,7 +128,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         )
     }
 
-    fn create_directory(&self) -> Box<dyn Future<Item = [u32; 5], Error = io::Error> + Send> {
+    fn create_directory(&self) -> Box<dyn Future<Output = Result<[u32; 5], io::Error>> + Send> {
         let name = rand::random();
         let mut p = self.path.clone();
         let name_str = name_to_string(name);
@@ -141,7 +141,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
     fn directory_exists(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send> {
         let mut p = self.path.clone();
         let name = name_to_string(name);
         p.push(&name[0..PREFIX_DIR_SIZE]);
@@ -157,7 +157,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         &self,
         directory: [u32; 5],
         name: &str,
-    ) -> Box<dyn Future<Item = Self::File, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Self::File, io::Error>> + Send> {
         let mut p = self.path.clone();
         let dir_name = name_to_string(directory);
         p.push(&dir_name[0..PREFIX_DIR_SIZE]);
@@ -170,7 +170,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         &self,
         directory: [u32; 5],
         file: &str,
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send> {
         let mut p = self.path.clone();
         let dir_name = name_to_string(directory);
         p.push(&dir_name[0..PREFIX_DIR_SIZE]);
@@ -249,7 +249,7 @@ impl DirectoryLabelStore {
     }
 }
 
-fn get_label_from_file(path: PathBuf) -> impl Future<Item = Label, Error = io::Error> + Send {
+fn get_label_from_file(path: PathBuf) -> impl Future<Output = Result<Label, io::Error>> + Send {
     let label = path.file_stem().unwrap().to_str().unwrap().to_owned();
 
     LockedFile::open(path)
@@ -258,7 +258,7 @@ fn get_label_from_file(path: PathBuf) -> impl Future<Item = Label, Error = io::E
             let s = String::from_utf8_lossy(&data);
             let lines: Vec<&str> = s.lines().collect();
             if lines.len() != 2 {
-                let result: Box<dyn Future<Item = _, Error = _> + Send> =
+                let result: Box<dyn Future<Output = Result<_, _>> + Send> =
                     Box::new(future::err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
@@ -300,7 +300,7 @@ fn get_label_from_file(path: PathBuf) -> impl Future<Item = Label, Error = io::E
 }
 
 impl LabelStore for DirectoryLabelStore {
-    fn labels(&self) -> Box<dyn Future<Item = Vec<Label>, Error = io::Error> + Send> {
+    fn labels(&self) -> Box<dyn Future<Output = Result<Vec<Label>, io::Error>> + Send> {
         Box::new(
             fs::read_dir(self.path.clone())
                 .flatten_stream()
@@ -317,7 +317,7 @@ impl LabelStore for DirectoryLabelStore {
         )
     }
 
-    fn create_label(&self, label: &str) -> Box<dyn Future<Item = Label, Error = io::Error> + Send> {
+    fn create_label(&self, label: &str) -> Box<dyn Future<Output = Result<Label, io::Error>> + Send> {
         let mut p = self.path.clone();
         let label = label.to_owned();
         p.push(format!("{}.label", label));
@@ -345,7 +345,7 @@ impl LabelStore for DirectoryLabelStore {
     fn get_label(
         &self,
         label: &str,
-    ) -> Box<dyn Future<Item = Option<Label>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Label>, io::Error>> + Send> {
         let label = label.to_owned();
         let mut p = self.path.clone();
         p.push(format!("{}.label", label));
@@ -367,7 +367,7 @@ impl LabelStore for DirectoryLabelStore {
         &self,
         label: &Label,
         layer: Option<[u32; 5]>,
-    ) -> Box<dyn Future<Item = Option<Label>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Label>, io::Error>> + Send> {
         let mut p = self.path.clone();
         p.push(format!("{}.label", label.name));
 
@@ -384,7 +384,7 @@ impl LabelStore for DirectoryLabelStore {
             if l == Some(old_label) {
                 // all good, let's a go
                 // TODO: this box should not be necessary here
-                let result: Box<dyn Future<Item = _, Error = _> + Send> = Box::new(
+                let result: Box<dyn Future<Output = Result<_, _>> + Send> = Box::new(
                     ExclusiveLockedFile::open(p)
                         .and_then(|f| tokio::io::write_all(f, contents))
                         .map(|_| Some(new_label)),

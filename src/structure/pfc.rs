@@ -4,12 +4,14 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::future;
+use futures::prelude::*;
 use std::cmp::{Ord, Ordering};
 use std::error::Error;
 use std::fmt::Display;
 use std::io;
-use tokio::codec::{Decoder, FramedRead};
+use tokio_util::codec::{Decoder, FramedRead};
 use tokio::prelude::*;
+use tokio::io::{AsyncReadExt};
 
 use super::logarray::*;
 use super::util::*;
@@ -499,20 +501,20 @@ impl Decoder for PfcDecoder {
 pub fn dict_file_get_count<F: 'static + FileLoad>(
     file: F,
 ) -> impl Future<Item = u64, Error = io::Error> + Send {
-    tokio::io::read_exact(file.open_read_from(file.size() - 8), vec![0; 8])
+    file.open_read_from(file.size() - 8).read_exact(vec![0; 8])
         .map(|(_, buf)| BigEndian::read_u64(&buf))
 }
 
-pub fn dict_reader_to_stream<A: 'static + AsyncRead + Send>(
+pub fn dict_reader_to_stream<A: 'static + tokio::io::AsyncRead+ Send>(
     r: A,
 ) -> impl Stream<Item = String, Error = io::Error> + Send {
     FramedRead::new(r, PfcDecoder::new())
 }
 
-pub fn dict_reader_to_indexed_stream<A: 'static + AsyncRead + Send>(
+pub fn dict_reader_to_indexed_stream<A: 'static + tokio::io::AsyncRead + Send>(
     r: A,
     offset: u64,
-) -> impl Stream<Item = (u64, String), Error = io::Error> + Send {
+) -> impl Stream<Item = Result<(u64, String), io::Error>> + Send {
     let count_stream = futures::stream::unfold(offset, |c| Some(Ok((c + 1, c + 1))));
     let dict_stream = dict_reader_to_stream(r);
     count_stream.zip(dict_stream)

@@ -11,6 +11,7 @@ use crate::structure::*;
 use futures::future;
 use futures::prelude::*;
 use futures::stream;
+use futures::task::Poll;
 use rayon::prelude::*;
 
 use std::io;
@@ -49,7 +50,7 @@ impl ChildLayer {
         name: [u32; 5],
         parent: Arc<InternalLayer>,
         files: &ChildLayerFiles<F>,
-    ) -> impl Future<Item = Self, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> {
         files
             .map_all()
             .map(move |maps| Self::load(name, parent, maps))
@@ -279,7 +280,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_node(
         self,
         node: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         match self.parent.subject_id(node) {
             None => {
                 let ChildLayerFileBuilder {
@@ -310,7 +311,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_predicate(
         self,
         predicate: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         match self.parent.predicate_id(predicate) {
             None => {
                 let ChildLayerFileBuilder {
@@ -346,7 +347,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_value(
         self,
         value: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         match self.parent.object_value_id(value) {
             None => {
                 let ChildLayerFileBuilder {
@@ -378,7 +379,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_nodes<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         nodes: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send,
     {
@@ -403,7 +404,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_predicates<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         predicates: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send,
     {
@@ -428,7 +429,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_values<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         values: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send,
     {
@@ -447,7 +448,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     /// Turn this builder into a phase 2 builder that will take triple data.
     pub fn into_phase2(
         self,
-    ) -> impl Future<Item = ChildLayerFileBuilderPhase2<F>, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<ChildLayerFileBuilderPhase2<F>, std::io::Error>> {
         let ChildLayerFileBuilder {
             parent,
             files,
@@ -555,7 +556,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let ChildLayerFileBuilderPhase2 {
             parent,
             files,
@@ -584,7 +585,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         if self.parent.triple_exists(subject, predicate, object) {
             // no need to do anything
             return future::Either::A(future::ok(self));
@@ -598,7 +599,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let ChildLayerFileBuilderPhase2 {
             parent,
             files,
@@ -627,7 +628,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         if !self.parent.triple_exists(subject, predicate, object) {
             // no need to do anything
             return future::Either::A(future::ok(self));
@@ -643,7 +644,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn add_id_triples(
         self,
         triples: Vec<IdTriple>,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let parent = self.parent.clone();
         let filtered: Vec<_> = triples
             .into_par_iter()
@@ -663,7 +664,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     pub fn remove_id_triples(
         self,
         triples: Vec<IdTriple>,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let parent = self.parent.clone();
         let filtered: Vec<_> = triples
             .into_par_iter()
@@ -677,7 +678,7 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
     }
 
     /// Write the layer data to storage.
-    pub fn finalize(self) -> impl Future<Item = (), Error = std::io::Error> + Send {
+    pub fn finalize(self) -> impl Future<Output = Result<(), std::io::Error>> + Send {
         let builder_futs = vec![self.pos_builder.finalize(), self.neg_builder.finalize()];
 
         let pos_s_p_files = self.files.pos_s_p_adjacency_list_files;
@@ -714,8 +715,8 @@ impl<F: 'static + FileLoad + FileStore + Clone + Send + Sync> ChildLayerFileBuil
 }
 
 pub struct ChildTripleStream<
-    S1: Stream<Item = u64, Error = io::Error>,
-    S2: Stream<Item = (u64, u64), Error = io::Error> + Send,
+    S1: Stream<Item = Result<u64, io::Error>>,
+    S2: Stream<Item = Result<(u64, u64), io::Error>> + Send,
 > {
     subjects_stream: stream::Peekable<S1>,
     s_p_stream: stream::Peekable<S2>,
@@ -726,8 +727,8 @@ pub struct ChildTripleStream<
 }
 
 impl<
-        S1: Stream<Item = u64, Error = io::Error>,
-        S2: Stream<Item = (u64, u64), Error = io::Error> + Send,
+        S1: Stream<Item = Result<u64, io::Error>>,
+        S2: Stream<Item = Result<(u64, u64), io::Error>> + Send,
     > ChildTripleStream<S1, S2>
 {
     fn new(subjects_stream: S1, s_p_stream: S2, sp_o_stream: S2) -> ChildTripleStream<S1, S2> {
@@ -743,30 +744,29 @@ impl<
 }
 
 impl<
-        S1: Stream<Item = u64, Error = io::Error>,
-        S2: Stream<Item = (u64, u64), Error = io::Error> + Send,
+        S1: Stream<Item = Result<u64, io::Error>>,
+        S2: Stream<Item = Result<(u64, u64), io::Error>> + Send,
     > Stream for ChildTripleStream<S1, S2>
 {
-    type Item = (u64, u64, u64);
-    type Error = io::Error;
+    type Item = Result<(u64, u64, u64), io::Error>;
 
-    fn poll(&mut self) -> Result<Async<Option<(u64, u64, u64)>>, io::Error> {
+    fn poll_next(&mut self) -> Result<Poll<Option<(u64, u64, u64)>>, io::Error> {
         let sp_o = self.sp_o_stream.peek().map(|x| x.map(|x| x.map(|x| *x)));
         match sp_o {
             Err(e) => Err(e),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
-            Ok(Async::Ready(Some((sp, o)))) => {
+            Ok(Poll::Pending) => Ok(Poll::Pending),
+            Ok(Poll::Ready(None)) => Ok(Poll::Ready(None)),
+            Ok(Poll::Ready(Some((sp, o)))) => {
                 if sp > self.last_sp {
                     let s_p = self.s_p_stream.peek().map(|x| x.map(|x| x.map(|x| *x)));
                     match s_p {
                         Err(e) => Err(e),
-                        Ok(Async::NotReady) => Ok(Async::NotReady),
-                        Ok(Async::Ready(None)) => Err(io::Error::new(
+                        Ok(Poll::Pending) => Ok(Poll::Pending),
+                        Ok(Poll::Ready(None)) => Err(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "unexpected end of s_p_stream",
                         )),
-                        Ok(Async::Ready(Some((s, p)))) => {
+                        Ok(Poll::Ready(Some((s, p)))) => {
                             if s > self.last_s_p.0 {
                                 let mapped_s = self
                                     .subjects_stream
@@ -774,12 +774,12 @@ impl<
                                     .map(|x| x.map(|x| x.map(|x| *x)));
                                 match mapped_s {
                                     Err(e) => Err(e),
-                                    Ok(Async::NotReady) => Ok(Async::NotReady),
-                                    Ok(Async::Ready(None)) => Err(io::Error::new(
+                                    Ok(Poll::Pending) => Ok(Poll::Pending),
+                                    Ok(Poll::Ready(None)) => Err(io::Error::new(
                                         io::ErrorKind::UnexpectedEof,
                                         "unexpected end of subjects_stream",
                                     )),
-                                    Ok(Async::Ready(Some(mapped_s))) => {
+                                    Ok(Poll::Ready(Some(mapped_s))) => {
                                         self.sp_o_stream.poll().expect("peeked stream sp_o_stream with confirmed result did not have result on poll");
                                         self.s_p_stream.poll().expect("peeked stream s_p_stream with confirmed result did not have result on poll");
                                         self.subjects_stream.poll().expect("peeked stream subjects_stream with confirmed result did not have result on poll");
@@ -787,7 +787,7 @@ impl<
                                         self.last_s_p = (s, p);
                                         self.last_sp = sp;
 
-                                        Ok(Async::Ready(Some((mapped_s, p, o))))
+                                        Ok(Poll::Ready(Some((mapped_s, p, o))))
                                     }
                                 }
                             } else {
@@ -796,14 +796,14 @@ impl<
                                 self.last_s_p = (s, p);
                                 self.last_sp = sp;
 
-                                Ok(Async::Ready(Some((self.last_mapped_s, p, o))))
+                                Ok(Poll::Ready(Some((self.last_mapped_s, p, o))))
                             }
                         }
                     }
                 } else {
                     self.sp_o_stream.poll().expect("peeked stream sp_o_stream with confirmed result did not have result on poll");
 
-                    Ok(Async::Ready(Some((self.last_mapped_s, self.last_s_p.1, o))))
+                    Ok(Poll::Ready(Some((self.last_mapped_s, self.last_s_p.1, o))))
                 }
             }
         }
@@ -814,7 +814,7 @@ pub fn open_child_triple_stream<F: 'static + FileLoad + FileStore>(
     subjects_file: F,
     s_p_files: AdjacencyListFiles<F>,
     sp_o_files: AdjacencyListFiles<F>,
-) -> impl Stream<Item = (u64, u64, u64), Error = io::Error> + Send {
+) -> impl Stream<Item = Result<(u64, u64, u64), io::Error>> + Send {
     let subjects_stream = logarray_stream_entries(subjects_file);
     let s_p_stream =
         adjacency_list_stream_pairs(s_p_files.bitindex_files.bits_file, s_p_files.nums_file);

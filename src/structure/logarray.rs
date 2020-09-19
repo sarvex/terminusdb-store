@@ -55,7 +55,7 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 use futures::{future, prelude::*};
 use std::{cmp::Ordering, convert::TryFrom, error, fmt, io};
-use tokio::codec::{Decoder, FramedRead};
+use tokio_util::codec::{Decoder, FramedRead};
 
 // Static assertion: We expect the system architecture bus width to be >= 32 bits. If it is not,
 // the following line will cause a compiler error. (Ignore the unrelated error message itself.)
@@ -350,7 +350,7 @@ impl<W: tokio::io::AsyncWrite> LogArrayFileBuilder<W> {
         self.count
     }
 
-    pub fn push(self, val: u64) -> impl Future<Item = LogArrayFileBuilder<W>, Error = io::Error> {
+    pub fn push(self, val: u64) -> impl Future<Output = Result<LogArrayFileBuilder<W>, io::Error>> {
         let LogArrayFileBuilder {
             file,
             width,
@@ -420,14 +420,14 @@ impl<W: tokio::io::AsyncWrite> LogArrayFileBuilder<W> {
         })
     }
 
-    pub fn push_all<S: Stream<Item = u64, Error = io::Error>>(
+    pub fn push_all<S: Stream<Item = Result<u64, io::Error>>>(
         self,
         vals: S,
-    ) -> impl Future<Item = LogArrayFileBuilder<W>, Error = io::Error> {
+    ) -> impl Future<Output = Result<LogArrayFileBuilder<W>, io::Error>> {
         vals.fold(self, |x, val| x.push(val))
     }
 
-    fn finalize_data(self) -> impl Future<Item = W, Error = io::Error> {
+    fn finalize_data(self) -> impl Future<Output = Result<W, io::Error>> {
         if u64::from(self.count) * u64::from(self.width) & 0b11_1111 == 0 {
             future::Either::A(future::ok(self.file))
         } else {
@@ -435,7 +435,7 @@ impl<W: tokio::io::AsyncWrite> LogArrayFileBuilder<W> {
         }
     }
 
-    pub fn finalize(self) -> impl Future<Item = W, Error = io::Error> {
+    pub fn finalize(self) -> impl Future<Output = Result<W, io::Error>> {
         let len = self.count;
         let width = self.width;
 
@@ -581,12 +581,12 @@ impl Decoder for LogArrayDecoder {
 
 pub fn logarray_file_get_length_and_width<F: FileLoad>(
     f: F,
-) -> impl Future<Item = (F, u32, u8), Error = io::Error> {
+) -> impl Future<Output = Result<(F, u32, u8), io::Error>> {
     LogArrayError::validate_input_buf_size(f.size())
         .map_or_else(|e| Err(e.into()), |_| Ok(f))
         .into_future()
         .and_then(|f| {
-            tokio::io::read_exact(f.open_read_from(f.size() - 8), [0; 8]).map(|(_, buf)| (f, buf))
+            f.open_read_from(f.size() - 8).read_exact([0; 8]).map(|(_, buf)| (f, buf))
         })
         .and_then(|(f, control_word)| {
             read_control_word(&control_word, f.size())
@@ -595,7 +595,7 @@ pub fn logarray_file_get_length_and_width<F: FileLoad>(
         })
 }
 
-pub fn logarray_stream_entries<F: FileLoad>(f: F) -> impl Stream<Item = u64, Error = io::Error> {
+pub fn logarray_stream_entries<F: FileLoad>(f: F) -> impl Stream<Item = Result<u64, io::Error>> {
     logarray_file_get_length_and_width(f)
         .map(|(f, len, width)| {
             FramedRead::new(f.open_read(), LogArrayDecoder::new_unchecked(width, len))

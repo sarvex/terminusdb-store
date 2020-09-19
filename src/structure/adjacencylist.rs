@@ -14,6 +14,8 @@ use std::convert::TryInto;
 
 use bytes::Bytes;
 use tokio::prelude::*;
+use futures::prelude::*;
+use futures::task::Poll;
 
 use super::bitarray::*;
 use super::bitindex::*;
@@ -166,12 +168,12 @@ impl Iterator for AdjacencyListIterator {
     }
 }
 
-pub struct AdjacencyBitCountStream<S: Stream<Item = bool, Error = std::io::Error>> {
+pub struct AdjacencyBitCountStream<S: Stream<Item = Result<bool, std::io::Error>>> {
     stream: S,
     count: u64,
 }
 
-impl<S: Stream<Item = bool, Error = std::io::Error>> AdjacencyBitCountStream<S> {
+impl<S: Stream<Item = Result<bool, std::io::Error>>> AdjacencyBitCountStream<S> {
     fn new(stream: S, offset: u64) -> Self {
         AdjacencyBitCountStream {
             stream,
@@ -180,23 +182,22 @@ impl<S: Stream<Item = bool, Error = std::io::Error>> AdjacencyBitCountStream<S> 
     }
 }
 
-impl<S: Stream<Item = bool, Error = std::io::Error>> Stream for AdjacencyBitCountStream<S> {
-    type Item = u64;
-    type Error = std::io::Error;
+impl<S: Stream<Item = Result<bool, std::io::Error>>> Stream for AdjacencyBitCountStream<S> {
+    type Item = Result<u64, std::io::Error>;
 
-    fn poll(&mut self) -> Poll<Option<u64>, std::io::Error> {
+    fn poll_next(&mut self) -> Poll<Option<u64>, std::io::Error> {
         match self.stream.poll() {
-            Ok(Async::Ready(Some(b))) => {
+            Ok(Poll::Ready(Some(b))) => {
                 let result = self.count;
 
                 if b {
                     self.count += 1;
                 }
 
-                Ok(Async::Ready(Some(result)))
+                Ok(Poll::Ready(Some(result)))
             }
-            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Ok(Poll::Ready(None)) => Ok(Poll::Ready(None)),
+            Ok(Poll::Pending) => Ok(Poll::Pending),
             Err(e) => Err(e),
         }
     }
@@ -205,7 +206,7 @@ impl<S: Stream<Item = bool, Error = std::io::Error>> Stream for AdjacencyBitCoun
 pub fn adjacency_list_stream_pairs<F: FileLoad>(
     bits_file: F,
     nums_file: F,
-) -> impl Stream<Item = (u64, u64), Error = std::io::Error> {
+) -> impl Stream<Item = Result<(u64, u64), std::io::Error>> {
     AdjacencyBitCountStream::new(bitarray_stream_bits(bits_file), 1)
         .zip(logarray_stream_entries(nums_file))
         .filter(|(_, right)| *right != 0)
@@ -214,9 +215,9 @@ pub fn adjacency_list_stream_pairs<F: FileLoad>(
 pub struct AdjacencyListBuilder<F, W1, W2, W3>
 where
     F: 'static + FileLoad + FileStore,
-    W1: 'static + AsyncWrite + Send,
-    W2: 'static + AsyncWrite + Send,
-    W3: 'static + AsyncWrite + Send,
+    W1: 'static + tokio::io::AsyncWrite + Send,
+    W2: 'static + tokio::io::AsyncWrite + Send,
+    W3: 'static + tokio::io::AsyncWrite + Send,
 {
     bitfile: F,
     bitarray: BitArrayFileBuilder<F::Write>,
@@ -230,9 +231,9 @@ where
 impl<F, W1, W2, W3> AdjacencyListBuilder<F, W1, W2, W3>
 where
     F: 'static + FileLoad + FileStore,
-    W1: 'static + AsyncWrite + Send,
-    W2: 'static + AsyncWrite + Send,
-    W3: 'static + AsyncWrite + Send,
+    W1: 'static + tokio::io::AsyncWrite + Send,
+    W2: 'static + tokio::io::AsyncWrite + Send,
+    W3: 'static + tokio::io::AsyncWrite + Send,
 {
     pub fn new(
         bitfile: F,
@@ -256,7 +257,7 @@ where
         }
     }
 
-    pub fn push(self, left: u64, right: u64) -> impl Future<Item = Self, Error = std::io::Error> {
+    pub fn push(self, left: u64, right: u64) -> impl Future<Item = Result<Self, std::io::Error>> {
         // the tricky thing with this code is that the bitarray lags one entry behind the logarray.
         // The reason for this is that at push time, we do not yet know if this entry is going to be
         // the last entry for `left`, we only know this when we push a greater `left` later on.
@@ -281,8 +282,8 @@ where
 
         let f1: Box<
             dyn Future<
-                    Item = (BitArrayFileBuilder<F::Write>, LogArrayFileBuilder<W3>),
-                    Error = std::io::Error,
+                    Output = Result<(BitArrayFileBuilder<F::Write>, LogArrayFileBuilder<W3>),
+                    std::io::Error>,
                 > + Send,
         > = if last_left == 0 && skip == 1 {
             // this is the first entry. we can't push a bit yet
@@ -318,14 +319,14 @@ where
         })
     }
 
-    pub fn push_all<S: Stream<Item = (u64, u64), Error = std::io::Error>>(
+    pub fn push_all<S: Stream<Item = Result<(u64, u64), std::io::Error>>>(
         self,
         stream: S,
-    ) -> impl Future<Item = Self, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> {
         stream.fold(self, |x, (left, right)| x.push(left, right))
     }
 
-    pub fn finalize(self) -> impl Future<Item = (), Error = std::io::Error> {
+    pub fn finalize(self) -> impl Future<Output = Result<(), std::io::Error>> {
         let AdjacencyListBuilder {
             bitfile,
             bitarray,
@@ -335,7 +336,7 @@ where
             last_left: _,
             last_right: _,
         } = self;
-        let fut: Box<dyn Future<Item = BitArrayFileBuilder<_>, Error = std::io::Error> + Send> =
+        let fut: Box<dyn Future<Output = Result<BitArrayFileBuilder<_>, std::io::Error>> + Send> =
             if nums.count() == 0 {
                 Box::new(future::ok(bitarray))
             } else {

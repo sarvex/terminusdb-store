@@ -8,6 +8,7 @@ use std::sync::{Arc, Weak};
 
 use futures::future;
 use futures::prelude::*;
+use tokio::io::AsyncReadExt;
 use std::sync::RwLock;
 
 use std::collections::HashMap;
@@ -32,31 +33,31 @@ lazy_static! {
 }
 
 pub trait LayerStore: 'static + Send + Sync {
-    fn layers(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send>;
+    fn layers(&self) -> Box<dyn Future<Output=Result<Vec<[u32; 5]>, io::Error>> + Send>;
     fn get_layer_with_cache(
         &self,
         name: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send>;
     fn get_layer(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send> {
         self.get_layer_with_cache(name, NOCACHE.clone())
     }
 
     fn create_base_layer(
         &self,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send>;
     fn create_child_layer_with_cache(
         &self,
         parent: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send>;
     fn create_child_layer(
         &self,
         parent: [u32; 5],
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         self.create_child_layer_with_cache(parent, NOCACHE.clone())
     }
 
@@ -71,13 +72,13 @@ pub trait LayerStore: 'static + Send + Sync {
         &self,
         descendant: [u32; 5],
         ancestor: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send>;
 }
 
 pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     type File: FileLoad + FileStore + Clone;
-    fn directories(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send>;
-    fn create_directory(&self) -> Box<dyn Future<Item = [u32; 5], Error = io::Error> + Send>;
+    fn directories(&self) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, io::Error>> + Send>;
+    fn create_directory(&self) -> Box<dyn Future<Output = Result<[u32; 5], io::Error>> + Send>;
     fn export_layers(&self, layer_ids: Box<dyn Iterator<Item = [u32; 5]>>) -> Vec<u8>;
     fn import_layers(
         &self,
@@ -88,22 +89,22 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn directory_exists(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send>;
     fn get_file(
         &self,
         directory: [u32; 5],
         name: &str,
-    ) -> Box<dyn Future<Item = Self::File, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<Self::File, io::Error>> + Send>;
     fn file_exists(
         &self,
         directory: [u32; 5],
         file: &str,
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send>;
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send>;
 
     fn layer_type(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = LayerType, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<LayerType, io::Error>> + Send> {
         Box::new(self.file_exists(name, FILENAMES.parent).map(|b| match b {
             true => LayerType::Child,
             false => LayerType::Base,
@@ -113,7 +114,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn base_layer_files(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = BaseLayerFiles<Self::File>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<BaseLayerFiles<Self::File>, io::Error>> + Send> {
         let filenames = vec![
             FILENAMES.node_dictionary_blocks,
             FILENAMES.node_dictionary_offsets,
@@ -198,7 +199,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn child_layer_files(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = ChildLayerFiles<Self::File>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<ChildLayerFiles<Self::File>, io::Error>> + Send> {
         let filenames = vec![
             FILENAMES.node_dictionary_blocks,
             FILENAMES.node_dictionary_offsets,
@@ -332,7 +333,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
         &self,
         dir_name: [u32; 5],
         parent_name: [u32; 5],
-    ) -> Box<dyn Future<Item = (), Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<(), std::io::Error>> + Send> {
         let parent_string = name_to_string(parent_name);
 
         Box::new(
@@ -346,11 +347,11 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn read_parent_file(
         &self,
         dir_name: [u32; 5],
-    ) -> Box<dyn Future<Item = [u32; 5], Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<[u32; 5], std::io::Error>> + Send> {
         Box::new(
             self.get_file(dir_name, FILENAMES.parent)
                 .map(|f| f.open_read())
-                .and_then(|reader| tokio::io::read_exact(reader, vec![0; 40]))
+                .and_then(|reader| reader.read_exact(vec![0; 40]))
                 .and_then(|(_, buf)| bytes_to_name(&buf)),
         )
     }
@@ -358,7 +359,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn retrieve_layer_stack_names(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = std::io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, std::io::Error>> + Send> {
         let cloned = self.clone();
         let mut result = Vec::new();
         result.push(name);
@@ -424,7 +425,7 @@ pub fn bytes_to_name(bytes: &Vec<u8>) -> Result<[u32; 5], std::io::Error> {
 impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStore<File = F>>
     LayerStore for T
 {
-    fn layers(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send> {
+    fn layers(&self) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, io::Error>> + Send> {
         self.directories()
     }
 
@@ -432,7 +433,7 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
         &self,
         name: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send> {
         if let Some(layer) = cache.get_layer_from_cache(name) {
             return Box::new(future::ok(Some(layer as Arc<dyn Layer>)));
         }
@@ -536,7 +537,7 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
 
     fn create_base_layer(
         &self,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         let cloned = self.clone();
         Box::new(self.create_directory().and_then(move |dir_name| {
             cloned.base_layer_files(dir_name).map(move |blf| {
@@ -549,7 +550,7 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
         &self,
         parent: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         let cloned = self.clone();
         Box::new(
             self.get_layer_with_cache(parent, cache)
@@ -592,7 +593,7 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
         &self,
         descendant: [u32; 5],
         ancestor: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send> {
         let cloned = self.clone();
         Box::new(future::loop_fn(
             (cloned, descendant),
@@ -683,14 +684,14 @@ impl CachedLayerStore {
 }
 
 impl LayerStore for CachedLayerStore {
-    fn layers(&self) -> Box<dyn Future<Item = Vec<[u32; 5]>, Error = io::Error> + Send> {
+    fn layers(&self) -> Box<dyn Future<Output = Result<Vec<[u32; 5]>, io::Error>> + Send> {
         self.inner.layers()
     }
 
     fn get_layer(
         &self,
         name: [u32; 5],
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send> {
         self.inner.get_layer_with_cache(name, self.cache.clone())
     }
 
@@ -698,13 +699,13 @@ impl LayerStore for CachedLayerStore {
         &self,
         name: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Option<Arc<dyn Layer>>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Option<Arc<dyn Layer>>, io::Error>> + Send> {
         self.inner.get_layer_with_cache(name, cache)
     }
 
     fn create_base_layer(
         &self,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         self.inner.create_base_layer()
     }
 
@@ -712,7 +713,7 @@ impl LayerStore for CachedLayerStore {
         &self,
         parent: [u32; 5],
         cache: Arc<dyn LayerCache>,
-    ) -> Box<dyn Future<Item = Box<dyn LayerBuilder>, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<Box<dyn LayerBuilder>, io::Error>> + Send> {
         self.inner.create_child_layer_with_cache(parent, cache)
     }
 
@@ -731,7 +732,7 @@ impl LayerStore for CachedLayerStore {
         &self,
         descendant: [u32; 5],
         ancestor: [u32; 5],
-    ) -> Box<dyn Future<Item = bool, Error = io::Error> + Send> {
+    ) -> Box<dyn Future<Output = Result<bool, io::Error>> + Send> {
         self.inner.layer_is_ancestor_of(descendant, ancestor)
     }
 }

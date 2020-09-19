@@ -4,6 +4,7 @@
 use futures::future;
 use futures::prelude::*;
 use futures::stream::Peekable;
+use futures::task::Poll;
 
 use super::builder::*;
 use super::internal::*;
@@ -39,7 +40,7 @@ impl BaseLayer {
     pub fn load_from_files<F: FileLoad + FileStore>(
         name: [u32; 5],
         files: &BaseLayerFiles<F>,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         files.map_all().map(move |maps| Self::load(name, maps))
     }
 
@@ -226,7 +227,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_node(
         self,
         node: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         let BaseLayerFileBuilder { files, builder } = self;
 
         builder
@@ -240,7 +241,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_predicate(
         self,
         predicate: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         let BaseLayerFileBuilder { files, builder } = self;
 
         builder
@@ -254,7 +255,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_value(
         self,
         value: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> + Send {
         let BaseLayerFileBuilder { files, builder } = self;
 
         builder
@@ -268,7 +269,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_nodes<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         nodes: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
         I: Sync,
@@ -286,7 +287,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_predicates<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         predicates: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
         I: Sync,
@@ -304,7 +305,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     pub fn add_values<I: 'static + IntoIterator<Item = String> + Send>(
         self,
         values: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
         I: Sync,
@@ -319,7 +320,7 @@ impl<F: 'static + FileLoad + FileStore + Clone> BaseLayerFileBuilder<F> {
     /// Turn this builder into a phase 2 builder that will take triple data.
     pub fn into_phase2(
         self,
-    ) -> impl Future<Item = BaseLayerFileBuilderPhase2<F>, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<BaseLayerFileBuilderPhase2<F>, std::io::Error>> {
         let BaseLayerFileBuilder { files, builder } = self;
 
         let dict_maps_fut = vec![
@@ -413,7 +414,7 @@ impl<F: 'static + FileLoad + FileStore> BaseLayerFileBuilderPhase2<F> {
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let BaseLayerFileBuilderPhase2 {
             files,
             object_count,
@@ -436,7 +437,7 @@ impl<F: 'static + FileLoad + FileStore> BaseLayerFileBuilderPhase2<F> {
     pub fn add_id_triples<I: 'static + IntoIterator<Item = IdTriple>>(
         self,
         triples: I,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send
     where
         <I as std::iter::IntoIterator>::IntoIter: Send,
     {
@@ -456,7 +457,7 @@ impl<F: 'static + FileLoad + FileStore> BaseLayerFileBuilderPhase2<F> {
             })
     }
 
-    pub fn finalize(self) -> impl Future<Item = (), Error = std::io::Error> {
+    pub fn finalize(self) -> impl Future<Output = Result<(), std::io::Error>> {
         let s_p_adjacency_list_files = self.files.s_p_adjacency_list_files;
         let sp_o_adjacency_list_files = self.files.sp_o_adjacency_list_files;
         let o_ps_adjacency_list_files = self.files.o_ps_adjacency_list_files;
@@ -476,14 +477,14 @@ impl<F: 'static + FileLoad + FileStore> BaseLayerFileBuilderPhase2<F> {
     }
 }
 
-pub struct BaseTripleStream<S: Stream<Item = (u64, u64), Error = io::Error> + Send> {
+pub struct BaseTripleStream<S: Stream<Item = Result<(u64, u64), io::Error>> + Send> {
     s_p_stream: Peekable<S>,
     sp_o_stream: Peekable<S>,
     last_s_p: (u64, u64),
     last_sp: u64,
 }
 
-impl<S: Stream<Item = (u64, u64), Error = io::Error> + Send> BaseTripleStream<S> {
+impl<S: Stream<Item = Result<(u64, u64), io::Error>> + Send> BaseTripleStream<S> {
     fn new(s_p_stream: S, sp_o_stream: S) -> BaseTripleStream<S> {
         BaseTripleStream {
             s_p_stream: s_p_stream.peekable(),
@@ -494,39 +495,38 @@ impl<S: Stream<Item = (u64, u64), Error = io::Error> + Send> BaseTripleStream<S>
     }
 }
 
-impl<S: Stream<Item = (u64, u64), Error = io::Error> + Send> Stream for BaseTripleStream<S> {
-    type Item = (u64, u64, u64);
-    type Error = io::Error;
+impl<S: Stream<Item = Result<(u64, u64), io::Error>> + Send> Stream for BaseTripleStream<S> {
+    type Item = Result<(u64, u64, u64), io::Error>;
 
-    fn poll(&mut self) -> Result<Async<Option<(u64, u64, u64)>>, io::Error> {
+    fn poll_next(&mut self) -> Result<Poll<Option<(u64, u64, u64)>>, io::Error> {
         let sp_o = self.sp_o_stream.peek().map(|x| x.map(|x| x.map(|x| *x)));
         match sp_o {
             Err(e) => Err(e),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
-            Ok(Async::Ready(Some((sp, o)))) => {
+            Ok(Poll::Pending) => Ok(Poll::Pending),
+            Ok(Poll::Ready(None)) => Ok(Poll::Ready(None)),
+            Ok(Poll::Ready(Some((sp, o)))) => {
                 if sp > self.last_sp {
                     let s_p = self.s_p_stream.peek().map(|x| x.map(|x| x.map(|x| *x)));
                     match s_p {
                         Err(e) => Err(e),
-                        Ok(Async::NotReady) => Ok(Async::NotReady),
-                        Ok(Async::Ready(None)) => Err(io::Error::new(
+                        Ok(Poll::Pending) => Ok(Poll::Pending),
+                        Ok(Poll::Ready(None)) => Err(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "unexpected end of s_p_stream",
                         )),
-                        Ok(Async::Ready(Some((s, p)))) => {
+                        Ok(Poll::Ready(Some((s, p)))) => {
                             self.sp_o_stream.poll().expect("peeked stream sp_o_stream with confirmed result did not have result on poll");
                             self.s_p_stream.poll().expect("peeked stream s_p_stream with confirmed result did not have result on poll");
                             self.last_s_p = (s, p);
                             self.last_sp = sp;
 
-                            Ok(Async::Ready(Some((s, p, o))))
+                            Ok(Poll::Ready(Some((s, p, o))))
                         }
                     }
                 } else {
                     self.sp_o_stream.poll().expect("peeked stream sp_o_stream with confirmed result did not have result on poll");
 
-                    Ok(Async::Ready(Some((self.last_s_p.0, self.last_s_p.1, o))))
+                    Ok(Poll::Ready(Some((self.last_s_p.0, self.last_s_p.1, o))))
                 }
             }
         }
@@ -536,7 +536,7 @@ impl<S: Stream<Item = (u64, u64), Error = io::Error> + Send> Stream for BaseTrip
 pub fn open_base_triple_stream<F: 'static + FileLoad + FileStore>(
     s_p_files: AdjacencyListFiles<F>,
     sp_o_files: AdjacencyListFiles<F>,
-) -> impl Stream<Item = (u64, u64, u64), Error = io::Error> + Send {
+) -> impl Stream<Item = Result<(u64, u64, u64), io::Error>> + Send {
     let s_p_stream =
         adjacency_list_stream_pairs(s_p_files.bitindex_files.bits_file, s_p_files.nums_file);
     let sp_o_stream =
