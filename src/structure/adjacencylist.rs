@@ -257,7 +257,7 @@ where
         }
     }
 
-    pub fn push(self, left: u64, right: u64) -> impl Future<Item = Result<Self, std::io::Error>> {
+    pub fn push(self, left: u64, right: u64) -> impl Future<Output = Result<Self, std::io::Error>> {
         // the tricky thing with this code is that the bitarray lags one entry behind the logarray.
         // The reason for this is that at push time, we do not yet know if this entry is going to be
         // the last entry for `left`, we only know this when we push a greater `left` later on.

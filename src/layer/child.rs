@@ -13,6 +13,7 @@ use futures::prelude::*;
 use futures::stream;
 use futures::task::Poll;
 use rayon::prelude::*;
+use tokio::prelude::*;
 
 use std::io;
 use std::sync::Arc;

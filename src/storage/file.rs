@@ -258,7 +258,7 @@ pub struct DictionaryFiles<F: 'static + FileLoad + FileStore> {
 }
 
 impl<F: 'static + FileLoad + FileStore> DictionaryFiles<F> {
-    pub fn map_all(&self) -> impl Future<Item = DictionaryMaps, Error = std::io::Error> {
+    pub fn map_all(&self) -> impl Future<Output = Result<DictionaryMaps, std::io::Error>> {
         let futs = vec![self.blocks_file.map(), self.offsets_file.map()];
         future::join_all(futs).map(|results| DictionaryMaps {
             blocks_map: results[0].clone(),
@@ -274,7 +274,7 @@ pub struct AdjacencyListFiles<F: 'static + FileLoad> {
 }
 
 impl<F: 'static + FileLoad + FileStore> AdjacencyListFiles<F> {
-    pub fn map_all(&self) -> impl Future<Item = AdjacencyListMaps, Error = std::io::Error> {
+    pub fn map_all(&self) -> impl Future<Output = Result<AdjacencyListMaps, std::io::Error>> {
         self.bitindex_files
             .map_all()
             .join(self.nums_file.map())
@@ -300,7 +300,7 @@ pub struct BitIndexFiles<F: 'static + FileLoad> {
 }
 
 impl<F: 'static + FileLoad + FileStore> BitIndexFiles<F> {
-    pub fn map_all(&self) -> impl Future<Item = BitIndexMaps, Error = std::io::Error> {
+    pub fn map_all(&self) -> impl Future<Output = Result<BitIndexMaps, std::io::Error>> {
         let futs = vec![
             self.bits_file.map(),
             self.blocks_file.map(),

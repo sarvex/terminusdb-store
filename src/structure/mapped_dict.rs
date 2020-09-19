@@ -53,7 +53,7 @@ pub fn merge_dictionary_stack<F: 'static + FileLoad + FileStore>(
     stack: Vec<(F, Option<BitIndexFiles<F>>)>,
     dict_files: DictionaryFiles<F>,
     wavelet_files: BitIndexFiles<F>,
-) -> impl Future<Item = (), Error = io::Error> + Send {
+) -> impl Future<Output = Result<(), io::Error>> + Send {
     let dict_builder = PfcDictFileBuilder::new(
         dict_files.blocks_file.open_write(),
         dict_files.offsets_file.open_write(),

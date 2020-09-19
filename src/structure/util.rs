@@ -2,7 +2,7 @@ use futures::prelude::*;
 use futures::stream::{Peekable, Stream};
 use futures::task::Poll;
 use std::io::Error;
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub fn find_common_prefix(b1: &[u8], b2: &[u8]) -> usize {
     let mut common = 0;
@@ -33,7 +33,7 @@ where
     W: AsyncWrite,
     B: AsRef<[u8]>,
 {
-    tokio::io::write_all(w, b).map(|(w, _)| w)
+    w.write_all(b).map(|(w, _)| w)
 }
 
 /// Write a buffer to `w`.

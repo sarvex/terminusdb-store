@@ -45,7 +45,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     /// Add a node string.
     ///
     /// Panics if the given node string is not a lexical successor of the previous node string.
-    pub fn add_node(self, node: &str) -> impl Future<Item = (u64, Self), Error = std::io::Error> {
+    pub fn add_node(self, node: &str) -> impl Future<Output = Result<(u64, Self), std::io::Error>> {
         let DictionarySetFileBuilder {
             node_dictionary_builder,
             predicate_dictionary_builder,
@@ -72,7 +72,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     pub fn add_predicate(
         self,
         predicate: &str,
-    ) -> impl Future<Item = (u64, Self), Error = std::io::Error> {
+    ) -> impl Future<Output = Result<(u64, Self), std::io::Error>> {
         let DictionarySetFileBuilder {
             node_dictionary_builder,
             predicate_dictionary_builder,
@@ -96,7 +96,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     /// Add a value string.
     ///
     /// Panics if the given value string is not a lexical successor of the previous value string.
-    pub fn add_value(self, value: &str) -> impl Future<Item = (u64, Self), Error = std::io::Error> {
+    pub fn add_value(self, value: &str) -> impl Future<Output = Result<(u64, Self), std::io::Error>> {
         let DictionarySetFileBuilder {
             node_dictionary_builder,
             predicate_dictionary_builder,
@@ -123,7 +123,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     pub fn add_nodes<I: 'static + IntoIterator<Item = String> + Send + Sync>(
         self,
         nodes: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error>
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>>
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
     {
@@ -145,7 +145,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     pub fn add_predicates<I: 'static + IntoIterator<Item = String> + Send + Sync>(
         self,
         predicates: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error>
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>>
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
     {
@@ -167,7 +167,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
     pub fn add_values<I: 'static + IntoIterator<Item = String> + Send + Sync>(
         self,
         values: I,
-    ) -> impl Future<Item = (Vec<u64>, Self), Error = std::io::Error>
+    ) -> impl Future<Output = Result<(Vec<u64>, Self), std::io::Error>>
     where
         <I as std::iter::IntoIterator>::IntoIter: Send + Sync,
     {
@@ -183,7 +183,7 @@ impl<F: 'static + FileLoad + FileStore> DictionarySetFileBuilder<F> {
         )
     }
 
-    pub fn finalize(self) -> impl Future<Item = (), Error = io::Error> + Send {
+    pub fn finalize(self) -> impl Future<Output = Result<(), io::Error>> + Send {
         let finalize_nodedict = self.node_dictionary_builder.finalize();
         let finalize_preddict = self.predicate_dictionary_builder.finalize();
         let finalize_valdict = self.value_dictionary_builder.finalize();
@@ -265,7 +265,7 @@ impl<F: 'static + FileLoad + FileStore> TripleFileBuilder<F> {
         subject: u64,
         predicate: u64,
         object: u64,
-    ) -> impl Future<Item = Self, Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> + Send {
         let TripleFileBuilder {
             mut subjects,
             subjects_file,
@@ -322,13 +322,13 @@ impl<F: 'static + FileLoad + FileStore> TripleFileBuilder<F> {
     pub fn add_id_triples<I: 'static + IntoIterator<Item = IdTriple>>(
         self,
         triples: I,
-    ) -> impl Future<Item = Self, Error = std::io::Error> {
+    ) -> impl Future<Output = Result<Self, std::io::Error>> {
         stream::iter_ok(triples).fold(self, |b, triple| {
             b.add_triple(triple.subject, triple.predicate, triple.object)
         })
     }
 
-    pub fn finalize(self) -> impl Future<Item = (), Error = std::io::Error> + Send {
+    pub fn finalize(self) -> impl Future<Output = Result<(), std::io::Error>> + Send {
         let aj_futs = vec![
             self.s_p_adjacency_list_builder.finalize(),
             self.sp_o_adjacency_list_builder.finalize(),
@@ -365,7 +365,7 @@ pub fn build_object_index<FLoad: 'static + FileLoad, F: 'static + FileLoad + Fil
     sp_o_files: AdjacencyListFiles<FLoad>,
     o_ps_files: AdjacencyListFiles<F>,
     objects_file: Option<F>,
-) -> impl Future<Item = (), Error = std::io::Error> {
+) -> impl Future<Output = Result<(), std::io::Error>> {
     let build_object_index = objects_file.is_some();
     adjacency_list_stream_pairs(sp_o_files.bitindex_files.bits_file, sp_o_files.nums_file)
         .map(move |(left, right)| (right, left))
@@ -447,7 +447,7 @@ pub fn build_predicate_index<FLoad: 'static + FileLoad, F: 'static + FileLoad + 
     destination_bits: F,
     destination_blocks: F,
     destination_sblocks: F,
-) -> impl Future<Item = (), Error = std::io::Error> + Send {
+) -> impl Future<Output = Result<(), std::io::Error>> + Send {
     build_wavelet_tree_from_logarray(
         source,
         destination_bits,
@@ -462,7 +462,7 @@ pub fn build_indexes<FLoad: 'static + FileLoad, F: 'static + FileLoad + FileStor
     o_ps_files: AdjacencyListFiles<F>,
     objects_file: Option<F>,
     wavelet_files: BitIndexFiles<F>,
-) -> impl Future<Item = (), Error = std::io::Error> + Send {
+) -> impl Future<Output = Result<(), std::io::Error>> + Send {
     let executor = tokio::executor::DefaultExecutor::current();
     let object_index_task = build_object_index(sp_o_files, o_ps_files, objects_file);
     let predicate_index_task = build_predicate_index(

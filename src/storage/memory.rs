@@ -38,7 +38,7 @@ impl Write for MemoryBackedStoreWriter {
 }
 
 impl tokio::io::AsyncWrite for MemoryBackedStoreWriter {
-    fn poll_shutdown(&mut self) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(&mut self) -> Poll<Result<(), io::Error> {
         Ok(Poll::Ready(()))
     }
 }

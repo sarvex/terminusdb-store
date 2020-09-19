@@ -333,7 +333,7 @@ impl<W: 'static + tokio::io::AsyncWrite + Send> PfcDictFileBuilder<W> {
     pub fn add(
         self,
         s: &str,
-    ) -> impl Future<Item = (u64, PfcDictFileBuilder<W>), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(u64, PfcDictFileBuilder<W>), std::io::Error>> + Send {
         let count = self.count;
         let size = self.size;
         let mut index = self.index;
@@ -395,7 +395,7 @@ impl<W: 'static + tokio::io::AsyncWrite + Send> PfcDictFileBuilder<W> {
     pub fn add_all<I: 'static + Iterator<Item = String> + Send>(
         self,
         it: I,
-    ) -> impl Future<Item = (Vec<u64>, PfcDictFileBuilder<W>), Error = std::io::Error> + Send {
+    ) -> impl Future<Output = Result<(Vec<u64>, PfcDictFileBuilder<W>), std::io::Error>> + Send {
         future::loop_fn((self, it, Vec::new()), |(builder, mut it, mut result)| {
             let next = it.next();
             match next {
@@ -409,7 +409,7 @@ impl<W: 'static + tokio::io::AsyncWrite + Send> PfcDictFileBuilder<W> {
     }
 
     /// finish the data structure
-    pub fn finalize(self) -> impl Future<Item = (), Error = std::io::Error> {
+    pub fn finalize(self) -> impl Future<Output = Result<(), std::io::Error>> {
         let width = if self.index.is_empty() {
             1
         } else {
@@ -500,14 +500,14 @@ impl Decoder for PfcDecoder {
 
 pub fn dict_file_get_count<F: 'static + FileLoad>(
     file: F,
-) -> impl Future<Item = u64, Error = io::Error> + Send {
+) -> impl Future<Output = Result<u64, io::Error>> + Send {
     file.open_read_from(file.size() - 8).read_exact(vec![0; 8])
         .map(|(_, buf)| BigEndian::read_u64(&buf))
 }
 
 pub fn dict_reader_to_stream<A: 'static + tokio::io::AsyncRead+ Send>(
     r: A,
-) -> impl Stream<Item = String, Error = io::Error> + Send {
+) -> impl Stream<Item = Result<String, io::Error>> + Send {
     FramedRead::new(r, PfcDecoder::new())
 }
 

@@ -66,7 +66,7 @@ impl FileLoad for FileBackedStore {
             } else {
                 let f = file.open_read();
                 future::Either::B(
-                    tokio::io::read_to_end(f, Vec::with_capacity(file.size()))
+                    f.read_to_end(Vec::with_capacity(file.size()))
                         .map(|(_, vec)| Bytes::from(vec)),
                 )
             }
@@ -253,7 +253,7 @@ fn get_label_from_file(path: PathBuf) -> impl Future<Output = Result<Label, io::
     let label = path.file_stem().unwrap().to_str().unwrap().to_owned();
 
     LockedFile::open(path)
-        .and_then(|f| tokio::io::read_to_end(f, Vec::new()))
+        .and_then(|f| f.read_to_end(Vec::new()))
         .and_then(move |(_f, data)| {
             let s = String::from_utf8_lossy(&data);
             let lines: Vec<&str> = s.lines().collect();

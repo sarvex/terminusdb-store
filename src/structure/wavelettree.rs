@@ -274,7 +274,7 @@ pub fn build_wavelet_tree_from_iter<I: Iterator<Item = u64>, F: 'static + FileLo
     destination_bits: F,
     destination_blocks: F,
     destination_sblocks: F,
-) -> impl Future<Item = (), Error = std::io::Error> + Send {
+) -> impl Future<Output = Result<(), std::io::Error>> + Send {
     let bits = BitArrayFileBuilder::new(destination_bits.open_write());
     let mut fragments = create_fragments(width);
 
@@ -307,7 +307,7 @@ pub fn build_wavelet_tree_from_logarray<
     destination_bits: F,
     destination_blocks: F,
     destination_sblocks: F,
-) -> impl Future<Item = (), Error = std::io::Error> + Send {
+) -> impl Future<Output = Result<(), std::io::Error>> + Send {
     source
         .map()
         .and_then(|bytes| LogArray::parse(bytes).map_err(|e| e.into()))
