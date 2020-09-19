@@ -185,7 +185,7 @@ impl<S: Stream<Item = Result<bool, std::io::Error>>> AdjacencyBitCountStream<S> 
 impl<S: Stream<Item = Result<bool, std::io::Error>>> Stream for AdjacencyBitCountStream<S> {
     type Item = Result<u64, std::io::Error>;
 
-    fn poll_next(&mut self) -> Poll<Option<u64>, std::io::Error> {
+    fn poll_next(&mut self) -> Poll<Result<u64, std::io::Error>> {
         match self.stream.poll() {
             Ok(Poll::Ready(Some(b))) => {
                 let result = self.count;
