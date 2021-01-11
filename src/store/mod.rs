@@ -570,9 +570,17 @@ pub fn open_memory_store() -> Store {
 /// Open a store that stores its data in the given directory
 pub fn open_directory_store<P: Into<PathBuf>>(path: P) -> Store {
     let p = path.into();
+    let mut layer_path = p.clone();
+    let mut label_path = p;
+
+    layer_path.push("layers");
+    label_path.push("labels");
     Store::new(
-        DirectoryLabelStore::new(p.clone()),
-        CachedLayerStore::new(DirectoryLayerStore::new(p), LockingHashMapLayerCache::new()),
+        DirectoryLabelStore::new(label_path),
+        CachedLayerStore::new(
+            DirectoryLayerStore::new(layer_path),
+            LockingHashMapLayerCache::new(),
+        ),
     )
 }
 

@@ -15,9 +15,13 @@ use tar::Archive;
 use tokio::fs::{self, *};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use hex;
+use sha1::{Digest, Sha1};
+
 use super::*;
 
-const PREFIX_DIR_SIZE: usize = 3;
+const L1_PREFIX_DIR_SIZE: usize = 2;
+const L2_PREFIX_DIR_SIZE: usize = 2;
 
 #[derive(Clone)]
 pub struct FileBackedStore {
@@ -89,6 +93,37 @@ impl FileStore for FileBackedStore {
     }
 }
 
+fn pathbuf_from_id<P: Into<PathBuf>>(id: [u32; 5], path: P) -> PathBuf {
+    let name_str = name_to_string(id);
+
+    pathbuf_from_string(&name_str, path)
+}
+
+fn pathbuf_from_string<P: Into<PathBuf>>(id_string: &str, path: P) -> PathBuf {
+    let mut p = path.into();
+    p.push(&id_string[0..L1_PREFIX_DIR_SIZE]);
+    p.push(&id_string[L1_PREFIX_DIR_SIZE..L1_PREFIX_DIR_SIZE + L2_PREFIX_DIR_SIZE]);
+    p.push(id_string);
+
+    p
+}
+
+fn pathbuf_from_label_name<P: Into<PathBuf>>(name: &str, path: P) -> PathBuf {
+    let mut p = path.into();
+    let digest = Sha1::digest(name.as_bytes());
+    let num_bytes = (L1_PREFIX_DIR_SIZE + L2_PREFIX_DIR_SIZE + 1) / 2;
+    let l = hex::encode(&digest[0..num_bytes]);
+    let l1 = &l[0..L1_PREFIX_DIR_SIZE];
+    let l2 = &l[L1_PREFIX_DIR_SIZE..L1_PREFIX_DIR_SIZE + L2_PREFIX_DIR_SIZE];
+
+    p.push(l1);
+    p.push(l2);
+    let filename = format!("{}.label", name);
+    p.push(filename);
+
+    p
+}
+
 #[derive(Clone)]
 pub struct DirectoryLayerStore {
     path: PathBuf,
@@ -124,10 +159,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
 
     fn create_directory(&self) -> Pin<Box<dyn Future<Output = io::Result<[u32; 5]>> + Send>> {
         let name = rand::random();
-        let mut p = self.path.clone();
-        let name_str = name_to_string(name);
-        p.push(&name_str[0..PREFIX_DIR_SIZE]);
-        p.push(name_str);
+        let p = pathbuf_from_id(name, &self.path);
 
         Box::pin(async move {
             fs::create_dir_all(p).await?;
@@ -140,10 +172,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         &self,
         name: [u32; 5],
     ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
-        let mut p = self.path.clone();
-        let name = name_to_string(name);
-        p.push(&name[0..PREFIX_DIR_SIZE]);
-        p.push(name);
+        let p = pathbuf_from_id(name, &self.path);
 
         Box::pin(async move {
             match fs::metadata(p).await {
@@ -158,10 +187,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         directory: [u32; 5],
         name: &str,
     ) -> Pin<Box<dyn Future<Output = io::Result<Self::File>> + Send>> {
-        let mut p = self.path.clone();
-        let dir_name = name_to_string(directory);
-        p.push(&dir_name[0..PREFIX_DIR_SIZE]);
-        p.push(dir_name);
+        let mut p = pathbuf_from_id(directory, &self.path);
         p.push(name);
         Box::pin(future::ok(FileBackedStore::new(p)))
     }
@@ -171,10 +197,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
         directory: [u32; 5],
         file: &str,
     ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
-        let mut p = self.path.clone();
-        let dir_name = name_to_string(directory);
-        p.push(&dir_name[0..PREFIX_DIR_SIZE]);
-        p.push(dir_name);
+        let mut p = pathbuf_from_id(directory, &self.path);
         p.push(file);
 
         Box::pin(async move {
@@ -192,10 +215,7 @@ impl PersistentLayerStore for DirectoryLayerStore {
             let mut tar = tar::Builder::new(&mut enc);
             for id in layer_ids {
                 let id_string = name_to_string(id);
-                let mut layer_path: PathBuf = path.into();
-                let layer_id_prefix_dir = &id_string[0..PREFIX_DIR_SIZE];
-                layer_path.push(layer_id_prefix_dir);
-                layer_path.push(&id_string);
+                let layer_path = pathbuf_from_string(&id_string, path);
 
                 let mut tar_path = PathBuf::new();
                 tar_path.push(&id_string);
@@ -228,9 +248,10 @@ impl PersistentLayerStore for DirectoryLayerStore {
             // check if entry is prefixed with a layer id we are interested in
             let layer_id = path.iter().next().and_then(|p| p.to_str()).unwrap_or("");
             if layer_id_set.contains(layer_id) {
-                let mut path: PathBuf = (&self.path).into();
-                let prefix = &layer_id[0..PREFIX_DIR_SIZE];
-                path.push(prefix);
+                let layer_path = pathbuf_from_string(layer_id, &self.path);
+                let path = layer_path
+                    .parent()
+                    .expect("expected layer path to have a parent");
 
                 // extract!
                 entry.unpack_in(path)?;
@@ -308,16 +329,39 @@ impl LabelStore for DirectoryLabelStore {
         Box::pin(async move {
             let mut stream = fs::read_dir(path).await?;
             let mut result = Vec::new();
+            // iterate over the l1 prefix dirs
             while let Some(direntry) = stream.next_entry().await? {
-                if direntry.file_type().await?.is_file() {
-                    let os_name = direntry.file_name();
-                    let name = os_name.to_str().ok_or(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unexpected non-utf8 directory name",
-                    ))?;
-                    if name.ends_with(".label") {
-                        let label = get_label_from_file(name).await?;
-                        result.push(label);
+                if !direntry.file_type().await?.is_dir() {
+                    continue;
+                }
+                if direntry.file_name().len() != L1_PREFIX_DIR_SIZE {
+                    continue;
+                }
+
+                // iterate over the l2 prefix dirs
+                let mut stream = fs::read_dir(direntry.path()).await?;
+                while let Some(direntry) = stream.next_entry().await? {
+                    if !direntry.file_type().await?.is_dir() {
+                        continue;
+                    }
+                    if direntry.file_name().len() != L2_PREFIX_DIR_SIZE {
+                        continue;
+                    }
+
+                    // iterate over the entries in an l1/l2 dir
+                    let mut stream = fs::read_dir(direntry.path()).await?;
+                    while let Some(direntry) = stream.next_entry().await? {
+                        if direntry.file_type().await?.is_file() {
+                            let os_name = direntry.file_name();
+                            let name = os_name.to_str().ok_or(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "unexpected non-utf8 directory name",
+                            ))?;
+                            if name.ends_with(".label") {
+                                let label = get_label_from_file(direntry.path()).await?;
+                                result.push(label);
+                            }
+                        }
                     }
                 }
             }
@@ -327,10 +371,9 @@ impl LabelStore for DirectoryLabelStore {
     }
 
     fn create_label(&self, label: &str) -> Pin<Box<dyn Future<Output = io::Result<Label>> + Send>> {
-        let mut p = self.path.clone();
-        let label = label.to_owned();
-        p.push(format!("{}.label", label));
+        let p = pathbuf_from_label_name(label, &self.path);
         let contents = format!("0\n\n").into_bytes();
+        let label = label.to_owned();
         Box::pin(async move {
             match fs::metadata(&p).await {
                 Ok(_) => Err(io::Error::new(
@@ -339,6 +382,10 @@ impl LabelStore for DirectoryLabelStore {
                 )),
                 Err(e) => match e.kind() {
                     io::ErrorKind::NotFound => {
+                        fs::create_dir_all(
+                            p.parent().expect("expected label path to have a parent"),
+                        )
+                        .await?;
                         let mut file = ExclusiveLockedFile::create_and_open(p).await?;
                         file.write_all(&contents).await?;
                         file.flush().await?;
@@ -355,9 +402,7 @@ impl LabelStore for DirectoryLabelStore {
         &self,
         label: &str,
     ) -> Pin<Box<dyn Future<Output = io::Result<Option<Label>>> + Send>> {
-        let label = label.to_owned();
-        let mut p = self.path.clone();
-        p.push(format!("{}.label", label));
+        let p = pathbuf_from_label_name(label, &self.path);
 
         Box::pin(async move {
             match get_label_from_file(p).await {
@@ -375,8 +420,7 @@ impl LabelStore for DirectoryLabelStore {
         label: &Label,
         layer: Option<[u32; 5]>,
     ) -> Pin<Box<dyn Future<Output = io::Result<Option<Label>>> + Send>> {
-        let mut p = self.path.clone();
-        p.push(format!("{}.label", label.name));
+        let p = pathbuf_from_label_name(&label.name, &self.path);
 
         let old_label = label.clone();
         let new_label = label.with_updated_layer(layer);
@@ -641,6 +685,23 @@ mod tests {
 
         let error = result.err().unwrap();
         assert_eq!(io::ErrorKind::InvalidInput, error.kind());
+    }
+
+    #[tokio::test]
+    async fn directory_label_listing() {
+        let dir = tempdir().unwrap();
+        let store = DirectoryLabelStore::new(dir.path());
+
+        store.create_label("foo").await.unwrap();
+        store.create_label("bar").await.unwrap();
+        store.create_label("baz").await.unwrap();
+        store.create_label("quux").await.unwrap();
+
+        let labels = store.labels().await.unwrap();
+        let mut result: Vec<_> = labels.into_iter().map(|l| l.name).collect();
+        result.sort();
+
+        assert_eq!(vec!["bar", "baz", "foo", "quux"], result);
     }
 
     #[test]
