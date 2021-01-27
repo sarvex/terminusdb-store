@@ -236,9 +236,9 @@ pub trait InternalLayerImpl {
             Some(lookup) => OptInternalLayerTriplePredicateIterator(Some(
                 InternalLayerTriplePredicateIterator::new(
                     lookup,
-                    self.pos_subjects(),
-                    self.pos_s_p_adjacency_list(),
-                    self.pos_sp_o_adjacency_list(),
+                    self.pos_subjects().cloned(),
+                    self.pos_s_p_adjacency_list().clone(),
+                    self.pos_sp_o_adjacency_list().clone(),
                 ),
             )),
             None => OptInternalLayerTriplePredicateIterator(None),
@@ -259,9 +259,9 @@ pub trait InternalLayerImpl {
                 OptInternalLayerTriplePredicateIterator(Some(
                     InternalLayerTriplePredicateIterator::new(
                         lookup,
-                        self.neg_subjects(),
-                        s_p_adjacency_list,
-                        sp_o_adjacency_list,
+                        self.neg_subjects().cloned(),
+                        s_p_adjacency_list.clone(),
+                        sp_o_adjacency_list.clone(),
                     ),
                 ))
             }

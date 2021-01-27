@@ -15,15 +15,15 @@ pub struct InternalLayerTriplePredicateIterator {
 impl InternalLayerTriplePredicateIterator {
     pub fn new(
         predicate_wavelet_lookup: WaveletLookup,
-        subjects: Option<&MonotonicLogArray>,
-        s_p_adjacency_list: &AdjacencyList,
-        sp_o_adjacency_list: &AdjacencyList,
+        subjects: Option<MonotonicLogArray>,
+        s_p_adjacency_list: AdjacencyList,
+        sp_o_adjacency_list: AdjacencyList,
     ) -> Self {
         let len = predicate_wavelet_lookup.len();
         let subject_iterator = InternalLayerTripleSubjectIterator::new(
-            subjects.cloned(),
-            s_p_adjacency_list.clone(),
-            sp_o_adjacency_list.clone(),
+            subjects,
+            s_p_adjacency_list,
+            sp_o_adjacency_list,
         );
 
         Self {

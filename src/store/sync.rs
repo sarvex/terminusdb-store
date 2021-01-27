@@ -188,12 +188,12 @@ impl SyncStoreLayer {
         task_sync(self.inner.triple_removals_sp(subject, predicate))
     }
 
-    pub fn triple_additions_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions_p(predicate)
+    pub fn triple_additions_p(&self, predicate: u64) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_additions_p(predicate))
     }
 
-    pub fn triple_removals_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals_p(predicate)
+    pub fn triple_removals_p(&self, predicate: u64) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_removals_p(predicate))
     }
 
     pub fn triple_additions_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {

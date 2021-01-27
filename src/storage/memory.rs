@@ -247,6 +247,58 @@ impl MemoryLayerStore {
             }
         })
     }
+
+    fn predicate_wavelet_addition_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<dyn Future<Output = io::Result<BitIndexFiles<MemoryBackedStore>>> + Send>>
+    {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                let predicate_wavelet_files;
+                match files {
+                    LayerFiles::Base(files) => {
+                        predicate_wavelet_files = files.predicate_wavelet_tree_files.clone();
+                    }
+                    LayerFiles::Child(files) => {
+                        predicate_wavelet_files = files.pos_predicate_wavelet_tree_files.clone();
+                    }
+                }
+
+                Ok(predicate_wavelet_files)
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn predicate_wavelet_removal_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<dyn Future<Output = io::Result<Option<BitIndexFiles<MemoryBackedStore>>>> + Send>>
+    {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                match files {
+                    LayerFiles::Base(_files) => {
+                        // base layer has no removals
+                        Ok(None)
+                    }
+                    LayerFiles::Child(files) => {
+                        let predicate_wavelet_files = files.pos_predicate_wavelet_tree_files.clone();
+
+                        Ok(Some(predicate_wavelet_files))
+                    }
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
 }
 
 pub fn base_layer_memory_files() -> BaseLayerFiles<MemoryBackedStore> {
@@ -949,6 +1001,45 @@ impl LayerStore for MemoryLayerStore {
                         .await?
                         .seek_subject_predicate(subject, predicate),
                 ) as Box<dyn Iterator<Item = _> + Send>)
+            } else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
+
+    fn triple_additions_p(
+        &self,
+        layer: [u32; 5],
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            let (subjects_file, s_p_aj_files, sp_o_aj_files) =
+                self_.triple_addition_files(layer).await?;
+            let predicate_wavelet_files = self_.predicate_wavelet_addition_files(layer).await?;
+
+            Ok(Box::new(
+                file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
+                    .await?)
+               as Box<dyn Iterator<Item=_>+Send>)
+        })
+    }
+
+    fn triple_removals_p(
+        &self,
+        layer: [u32; 5],
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let files_fut = self.triple_removal_files(layer);
+        let wavelet_files_fut = self.predicate_wavelet_removal_files(layer);
+        Box::pin(async move {
+            if let (Some((subjects_file, s_p_aj_files, sp_o_aj_files)), Some(predicate_wavelet_files)) = (files_fut.await?, wavelet_files_fut.await?) {
+                Ok(Box::new(
+                    file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
+                        .await?)
+                   as Box<dyn Iterator<Item=_>+Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }

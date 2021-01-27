@@ -351,12 +351,16 @@ impl StoreLayer {
             .triple_removals_sp(self.layer.name(), subject, predicate)
     }
 
-    pub fn triple_additions_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        todo!();
+    pub fn triple_additions_p(&self, predicate: u64) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+        self.store
+            .layer_store
+            .triple_additions_p(self.layer.name(), predicate)
     }
 
-    pub fn triple_removals_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        todo!();
+    pub fn triple_removals_p(&self, predicate: u64) -> Pin<Box<dyn Future<Output=io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+        self.store
+            .layer_store
+            .triple_removals_p(self.layer.name(), predicate)
     }
 
     pub fn triple_additions_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
