@@ -170,11 +170,42 @@ pub trait InternalLayerImpl {
         )
     }
 
-    fn internal_triple_additions(&self) -> OptInternalLayerTripleSubjectIterator {
-        OptInternalLayerTripleSubjectIterator(Some(InternalLayerTripleSubjectIterator::new(
+    fn internal_triple_addition_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
+        layer_triple_exists(
             self.pos_subjects(),
             self.pos_s_p_adjacency_list(),
             self.pos_sp_o_adjacency_list(),
+            subject,
+            predicate,
+            object,
+        )
+    }
+
+    fn internal_triple_removal_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
+        match (
+            self.neg_subjects(),
+            self.neg_s_p_adjacency_list(),
+            self.neg_sp_o_adjacency_list(),
+        ) {
+            (neg_subject, Some(neg_s_p_adjacency_list), Some(neg_sp_o_adjacency_list)) => {
+                layer_triple_exists(
+                    neg_subject,
+                    neg_s_p_adjacency_list,
+                    neg_sp_o_adjacency_list,
+                    subject,
+                    predicate,
+                    object,
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn internal_triple_additions(&self) -> OptInternalLayerTripleSubjectIterator {
+        OptInternalLayerTripleSubjectIterator(Some(InternalLayerTripleSubjectIterator::new(
+            self.pos_subjects().cloned(),
+            self.pos_s_p_adjacency_list().clone(),
+            self.pos_sp_o_adjacency_list().clone(),
         )))
     }
 
@@ -187,9 +218,9 @@ pub trait InternalLayerImpl {
             ) {
                 (neg_subjects, Some(neg_s_p_adjacency_list), Some(neg_sp_o_adjacency_list)) => {
                     Some(InternalLayerTripleSubjectIterator::new(
-                        neg_subjects,
-                        neg_s_p_adjacency_list,
-                        neg_sp_o_adjacency_list,
+                        neg_subjects.cloned(),
+                        neg_s_p_adjacency_list.clone(),
+                        neg_sp_o_adjacency_list.clone(),
                     ))
                 }
                 _ => None,
@@ -538,18 +569,17 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
             return false;
         }
 
-        if self.triple_addition_exists(subject, predicate, object) {
-            return true;
-        }
-        if self.triple_removal_exists(subject, predicate, object) {
+        if self.internal_triple_addition_exists(subject, predicate, object) {
+            true
+        } else if self.internal_triple_removal_exists(subject, predicate, object) {
             false
         } else {
             let mut parent_opt = self.immediate_parent();
             while parent_opt.is_some() {
                 let parent = parent_opt.unwrap();
-                if parent.triple_addition_exists(subject, predicate, object) {
+                if parent.internal_triple_addition_exists(subject, predicate, object) {
                     return true;
-                } else if parent.triple_removal_exists(subject, predicate, object) {
+                } else if parent.internal_triple_removal_exists(subject, predicate, object) {
                     return false;
                 }
 
@@ -560,63 +590,8 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
         }
     }
 
-    fn triple_addition_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
-        layer_triple_exists(
-            self.pos_subjects(),
-            self.pos_s_p_adjacency_list(),
-            self.pos_sp_o_adjacency_list(),
-            subject,
-            predicate,
-            object,
-        )
-    }
-
-    fn triple_removal_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
-        match (
-            self.neg_subjects(),
-            self.neg_s_p_adjacency_list(),
-            self.neg_sp_o_adjacency_list(),
-        ) {
-            (neg_subject, Some(neg_s_p_adjacency_list), Some(neg_sp_o_adjacency_list)) => {
-                layer_triple_exists(
-                    neg_subject,
-                    neg_s_p_adjacency_list,
-                    neg_sp_o_adjacency_list,
-                    subject,
-                    predicate,
-                    object,
-                )
-            }
-            _ => false,
-        }
-    }
-
-    fn triple_additions(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(self.internal_triple_additions())
-    }
-
-    fn triple_removals(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(self.internal_triple_removals())
-    }
-
     fn triples(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         Box::new(InternalTripleSubjectIterator::from_layer(self))
-    }
-
-    fn triple_additions_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_additions()
-                .seek_subject(subject)
-                .take_while(move |t| t.subject == subject),
-        )
-    }
-
-    fn triple_removals_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_removals()
-                .seek_subject(subject)
-                .take_while(move |t| t.subject == subject),
-        )
     }
 
     fn triples_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
@@ -624,30 +599,6 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
             InternalTripleSubjectIterator::from_layer(self)
                 .seek_subject(subject)
                 .take_while(move |t| t.subject == subject),
-        )
-    }
-
-    fn triple_additions_sp(
-        &self,
-        subject: u64,
-        predicate: u64,
-    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_additions()
-                .seek_subject_predicate(subject, predicate)
-                .take_while(move |t| t.subject == subject && t.predicate == predicate),
-        )
-    }
-
-    fn triple_removals_sp(
-        &self,
-        subject: u64,
-        predicate: u64,
-    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_removals()
-                .seek_subject_predicate(subject, predicate)
-                .take_while(move |t| t.subject == subject && t.predicate == predicate),
         )
     }
 
@@ -663,32 +614,8 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
         )
     }
 
-    fn triple_additions_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(self.internal_triple_additions_by_predicate(predicate))
-    }
-
-    fn triple_removals_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(self.internal_triple_removals_by_predicate(predicate))
-    }
-
     fn triples_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         Box::new(InternalTriplePredicateIterator::from_layer(self, predicate))
-    }
-
-    fn triple_additions_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_additions_by_object()
-                .seek_object(object)
-                .take_while(move |t| t.object == object),
-        )
-    }
-
-    fn triple_removals_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        Box::new(
-            self.internal_triple_removals_by_object()
-                .seek_object(object)
-                .take_while(move |t| t.object == object),
-        )
     }
 
     fn triples_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
@@ -756,6 +683,13 @@ impl InternalLayer {
         result.reverse();
 
         result
+    }
+
+    pub fn is_rollup(&self) -> bool {
+        match self {
+            Self::Rollup(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -866,7 +800,7 @@ impl InternalLayerImpl for InternalLayer {
     }
 }
 
-fn layer_triple_exists(
+pub(crate) fn layer_triple_exists(
     subjects: Option<&MonotonicLogArray>,
     s_p_adjacency_list: &AdjacencyList,
     sp_o_adjacency_list: &AdjacencyList,

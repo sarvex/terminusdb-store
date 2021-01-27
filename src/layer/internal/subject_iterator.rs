@@ -18,14 +18,14 @@ pub struct InternalLayerTripleSubjectIterator {
 
 impl InternalLayerTripleSubjectIterator {
     pub fn new(
-        subjects: Option<&MonotonicLogArray>,
-        s_p_adjacency_list: &AdjacencyList,
-        sp_o_adjacency_list: &AdjacencyList,
+        subjects: Option<MonotonicLogArray>,
+        s_p_adjacency_list: AdjacencyList,
+        sp_o_adjacency_list: AdjacencyList,
     ) -> Self {
         Self {
-            subjects: subjects.cloned(),
-            s_p_adjacency_list: s_p_adjacency_list.clone(),
-            sp_o_adjacency_list: sp_o_adjacency_list.clone(),
+            subjects: subjects,
+            s_p_adjacency_list: s_p_adjacency_list,
+            sp_o_adjacency_list: sp_o_adjacency_list,
             s_position: 0,
             s_p_position: 0,
             sp_o_position: 0,

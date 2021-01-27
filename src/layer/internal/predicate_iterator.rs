@@ -21,9 +21,9 @@ impl InternalLayerTriplePredicateIterator {
     ) -> Self {
         let len = predicate_wavelet_lookup.len();
         let subject_iterator = InternalLayerTripleSubjectIterator::new(
-            subjects,
-            s_p_adjacency_list,
-            sp_o_adjacency_list,
+            subjects.cloned(),
+            s_p_adjacency_list.clone(),
+            sp_o_adjacency_list.clone(),
         );
 
         Self {

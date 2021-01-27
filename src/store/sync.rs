@@ -128,6 +128,81 @@ impl SyncStoreLayer {
     pub fn rollup(&self) -> Result<(), io::Error> {
         task_sync(self.inner.clone().rollup())
     }
+
+    pub fn triple_addition_exists(
+        &self,
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> io::Result<bool> {
+        task_sync(
+            self.inner
+                .triple_addition_exists(subject, predicate, object),
+        )
+    }
+
+    pub fn triple_removal_exists(
+        &self,
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> io::Result<bool> {
+        task_sync(self.inner.triple_removal_exists(subject, predicate, object))
+    }
+
+    pub fn triple_additions(&self) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_additions())
+    }
+
+    pub fn triple_removals(&self) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_removals())
+    }
+
+    pub fn triple_additions_s(
+        &self,
+        subject: u64,
+    ) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_additions_s(subject))
+    }
+
+    pub fn triple_removals_s(
+        &self,
+        subject: u64,
+    ) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_removals_s(subject))
+    }
+
+    pub fn triple_additions_sp(
+        &self,
+        subject: u64,
+        predicate: u64,
+    ) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_additions_sp(subject, predicate))
+    }
+
+    pub fn triple_removals_sp(
+        &self,
+        subject: u64,
+        predicate: u64,
+    ) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
+        task_sync(self.inner.triple_removals_sp(subject, predicate))
+    }
+
+    pub fn triple_additions_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        self.inner.triple_additions_p(predicate)
+    }
+
+    pub fn triple_removals_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        self.inner.triple_removals_p(predicate)
+    }
+
+    pub fn triple_additions_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        self.inner.triple_additions_o(object)
+    }
+
+    pub fn triple_removals_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        self.inner.triple_removals_o(object)
+    }
 }
 
 impl Layer for SyncStoreLayer {
@@ -179,37 +254,12 @@ impl Layer for SyncStoreLayer {
         self.inner.triple_exists(subject, predicate, object)
     }
 
-    fn triple_addition_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
-        self.inner
-            .triple_addition_exists(subject, predicate, object)
-    }
-
-    fn triple_removal_exists(&self, subject: u64, predicate: u64, object: u64) -> bool {
-        self.inner.triple_removal_exists(subject, predicate, object)
-    }
-
     fn triples(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         self.inner.triples()
     }
 
-    fn triple_additions(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions()
-    }
-
-    fn triple_removals(&self) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals()
-    }
-
     fn triples_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         self.inner.triples_s(subject)
-    }
-
-    fn triple_additions_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions_s(subject)
-    }
-
-    fn triple_removals_s(&self, subject: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals_s(subject)
     }
 
     fn triples_sp(
@@ -220,44 +270,12 @@ impl Layer for SyncStoreLayer {
         self.inner.triples_sp(subject, predicate)
     }
 
-    fn triple_additions_sp(
-        &self,
-        subject: u64,
-        predicate: u64,
-    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions_sp(subject, predicate)
-    }
-
-    fn triple_removals_sp(
-        &self,
-        subject: u64,
-        predicate: u64,
-    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals_sp(subject, predicate)
-    }
-
     fn triples_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         self.inner.triples_p(predicate)
     }
 
-    fn triple_additions_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions_p(predicate)
-    }
-
-    fn triple_removals_p(&self, predicate: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals_p(predicate)
-    }
-
     fn triples_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
         self.inner.triples_o(object)
-    }
-
-    fn triple_additions_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_additions_o(object)
-    }
-
-    fn triple_removals_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
-        self.inner.triple_removals_o(object)
     }
 
     fn clone_boxed(&self) -> Box<dyn Layer> {

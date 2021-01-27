@@ -1,6 +1,6 @@
 use super::layer::*;
 use crate::layer::*;
-use futures::future::Future;
+use futures::future::{self, Future};
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
@@ -213,6 +213,152 @@ impl LayerStore for CachedLayerStore {
         ancestor: [u32; 5],
     ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
         self.inner.layer_is_ancestor_of(descendant, ancestor)
+    }
+
+    fn triple_addition_exists(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(
+                    cached.internal_triple_addition_exists(subject, predicate, object),
+                ));
+            }
+        }
+
+        self.inner
+            .triple_addition_exists(layer, subject, predicate, object)
+    }
+
+    fn triple_removal_exists(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(
+                    cached.internal_triple_removal_exists(subject, predicate, object),
+                ));
+            }
+        }
+
+        self.inner
+            .triple_removal_exists(layer, subject, predicate, object)
+    }
+
+    fn triple_additions(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(cached.internal_triple_additions())
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_additions(layer)
+    }
+
+    fn triple_removals(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(cached.internal_triple_removals())
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_removals(layer)
+    }
+
+    fn triple_additions_s(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached.internal_triple_additions().seek_subject(subject),
+                )
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_additions_s(layer, subject)
+    }
+
+    fn triple_removals_s(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached.internal_triple_removals().seek_subject(subject),
+                )
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_removals_s(layer, subject)
+    }
+
+    fn triple_additions_sp(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached
+                        .internal_triple_additions()
+                        .seek_subject_predicate(subject, predicate),
+                )
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_additions_sp(layer, subject, predicate)
+    }
+
+    fn triple_removals_sp(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached
+                        .internal_triple_removals()
+                        .seek_subject_predicate(subject, predicate),
+                )
+                    as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_removals_sp(layer, subject, predicate)
     }
 }
 

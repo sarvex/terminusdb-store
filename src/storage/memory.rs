@@ -12,7 +12,7 @@ use std::sync::{self, Arc, RwLock};
 
 use super::*;
 use crate::layer::{
-    delta_rollup, delta_rollup_upto, BaseLayer, ChildLayer, InternalLayer, LayerBuilder,
+    delta_rollup, delta_rollup_upto, BaseLayer, ChildLayer, IdTriple, InternalLayer, LayerBuilder,
     RollupLayer, SimpleLayerBuilder,
 };
 
@@ -169,6 +169,83 @@ pub struct MemoryLayerStore {
 impl MemoryLayerStore {
     pub fn new() -> MemoryLayerStore {
         Default::default()
+    }
+
+    fn triple_addition_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<(
+                        MemoryBackedStore,
+                        AdjacencyListFiles<MemoryBackedStore>,
+                        AdjacencyListFiles<MemoryBackedStore>,
+                    )>,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                let (s_p_aj_files, sp_o_aj_files, subjects_file);
+                match files {
+                    LayerFiles::Base(files) => {
+                        s_p_aj_files = files.s_p_adjacency_list_files.clone();
+                        sp_o_aj_files = files.sp_o_adjacency_list_files.clone();
+                        subjects_file = files.subjects_file.clone();
+                    }
+                    LayerFiles::Child(files) => {
+                        s_p_aj_files = files.pos_s_p_adjacency_list_files.clone();
+                        sp_o_aj_files = files.pos_sp_o_adjacency_list_files.clone();
+                        subjects_file = files.pos_subjects_file.clone();
+                    }
+                }
+
+                Ok((subjects_file, s_p_aj_files, sp_o_aj_files))
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_removal_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<
+                        Option<(
+                            MemoryBackedStore,
+                            AdjacencyListFiles<MemoryBackedStore>,
+                            AdjacencyListFiles<MemoryBackedStore>,
+                        )>,
+                    >,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                match files {
+                    LayerFiles::Base(_files) => {
+                        // base layer has no removals
+                        Ok(None)
+                    }
+                    LayerFiles::Child(files) => {
+                        let (s_p_aj_files, sp_o_aj_files, subjects_file);
+                        s_p_aj_files = files.pos_s_p_adjacency_list_files.clone();
+                        sp_o_aj_files = files.pos_sp_o_adjacency_list_files.clone();
+                        subjects_file = files.pos_subjects_file.clone();
+
+                        Ok(Some((subjects_file, s_p_aj_files, sp_o_aj_files)))
+                    }
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
     }
 }
 
@@ -711,6 +788,169 @@ impl LayerStore for MemoryLayerStore {
                     Some((Some(parent), _, _)) => d = *parent,
                     _ => return Ok(false),
                 }
+            }
+        })
+    }
+
+    fn triple_addition_exists(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
+        let files_fut = self.triple_addition_files(layer);
+        Box::pin(async move {
+            let (subjects_file, s_p_aj_files, sp_o_aj_files) = files_fut.await?;
+
+            file_triple_exists(
+                subjects_file,
+                s_p_aj_files,
+                sp_o_aj_files,
+                subject,
+                predicate,
+                object,
+            )
+            .await
+        })
+    }
+
+    fn triple_removal_exists(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<bool>> + Send>> {
+        let files_fut = self.triple_removal_files(layer);
+        Box::pin(async move {
+            if let Some((subjects_file, s_p_aj_files, sp_o_aj_files)) = files_fut.await? {
+                file_triple_exists(
+                    subjects_file,
+                    s_p_aj_files,
+                    sp_o_aj_files,
+                    subject,
+                    predicate,
+                    object,
+                )
+                .await
+            } else {
+                Ok(false)
+            }
+        })
+    }
+
+    fn triple_additions(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let files_fut = self.triple_addition_files(layer);
+        Box::pin(async move {
+            let (subjects_file, s_p_aj_files, sp_o_aj_files) = files_fut.await?;
+
+            Ok(
+                Box::new(file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files).await?)
+                    as Box<dyn Iterator<Item = _> + Send>,
+            )
+        })
+    }
+
+    fn triple_removals(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let files_fut = self.triple_removal_files(layer);
+        Box::pin(async move {
+            if let Some((subjects_file, s_p_aj_files, sp_o_aj_files)) = files_fut.await? {
+                Ok(
+                    Box::new(
+                        file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files).await?,
+                    ) as Box<dyn Iterator<Item = _> + Send>,
+                )
+            } else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
+
+    fn triple_additions_s(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            let (subjects_file, s_p_aj_files, sp_o_aj_files) =
+                self_.triple_addition_files(layer).await?;
+
+            Ok(Box::new(
+                file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
+                    .await?
+                    .seek_subject(subject),
+            ) as Box<dyn Iterator<Item = _> + Send>)
+        })
+    }
+
+    fn triple_removals_s(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let files_fut = self.triple_removal_files(layer);
+        Box::pin(async move {
+            if let Some((subjects_file, s_p_aj_files, sp_o_aj_files)) = files_fut.await? {
+                Ok(Box::new(
+                    file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
+                        .await?
+                        .seek_subject(subject),
+                ) as Box<dyn Iterator<Item = _> + Send>)
+            } else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
+
+    fn triple_additions_sp(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            let (subjects_file, s_p_aj_files, sp_o_aj_files) =
+                self_.triple_addition_files(layer).await?;
+
+            Ok(Box::new(
+                file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
+                    .await?
+                    .seek_subject_predicate(subject, predicate),
+            ) as Box<dyn Iterator<Item = _> + Send>)
+        })
+    }
+
+    fn triple_removals_sp(
+        &self,
+        layer: [u32; 5],
+        subject: u64,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let files_fut = self.triple_removal_files(layer);
+        Box::pin(async move {
+            if let Some((subjects_file, s_p_aj_files, sp_o_aj_files)) = files_fut.await? {
+                Ok(Box::new(
+                    file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
+                        .await?
+                        .seek_subject_predicate(subject, predicate),
+                ) as Box<dyn Iterator<Item = _> + Send>)
+            } else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
         })
     }
