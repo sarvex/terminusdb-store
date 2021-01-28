@@ -16,16 +16,16 @@ pub struct InternalLayerTripleObjectIterator {
 
 impl InternalLayerTripleObjectIterator {
     pub fn new(
-        subjects: Option<&MonotonicLogArray>,
-        objects: Option<&MonotonicLogArray>,
-        o_ps_adjacency_list: &AdjacencyList,
-        s_p_adjacency_list: &AdjacencyList,
+        subjects: Option<MonotonicLogArray>,
+        objects: Option<MonotonicLogArray>,
+        o_ps_adjacency_list: AdjacencyList,
+        s_p_adjacency_list: AdjacencyList,
     ) -> Self {
         Self {
-            subjects: subjects.cloned(),
-            objects: objects.cloned(),
-            o_ps_adjacency_list: o_ps_adjacency_list.clone(),
-            s_p_adjacency_list: s_p_adjacency_list.clone(),
+            subjects: subjects,
+            objects: objects,
+            o_ps_adjacency_list: o_ps_adjacency_list,
+            s_p_adjacency_list: s_p_adjacency_list,
             o_position: 0,
             o_ps_position: 0,
             peeked: None,

@@ -271,10 +271,10 @@ pub trait InternalLayerImpl {
 
     fn internal_triple_additions_by_object(&self) -> OptInternalLayerTripleObjectIterator {
         OptInternalLayerTripleObjectIterator(Some(InternalLayerTripleObjectIterator::new(
-            self.pos_subjects(),
-            self.pos_objects(),
-            self.pos_o_ps_adjacency_list(),
-            self.pos_s_p_adjacency_list(),
+            self.pos_subjects().cloned(),
+            self.pos_objects().cloned(),
+            self.pos_o_ps_adjacency_list().clone(),
+            self.pos_s_p_adjacency_list().clone(),
         )))
     }
 
@@ -292,10 +292,10 @@ pub trait InternalLayerImpl {
                     Some(neg_o_ps_adjacency_list),
                     Some(neg_s_p_adjacency_list),
                 ) => Some(InternalLayerTripleObjectIterator::new(
-                    neg_subjects,
-                    neg_objects,
-                    neg_o_ps_adjacency_list,
-                    neg_s_p_adjacency_list,
+                    neg_subjects.cloned(),
+                    neg_objects.cloned(),
+                    neg_o_ps_adjacency_list.clone(),
+                    neg_s_p_adjacency_list.clone(),
                 )),
                 _ => None,
             },

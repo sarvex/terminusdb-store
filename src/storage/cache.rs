@@ -396,6 +396,44 @@ impl LayerStore for CachedLayerStore {
 
         self.inner.triple_removals_p(layer, predicate)
     }
+
+    fn triple_additions_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached
+                        .internal_triple_additions_by_object()
+                        .seek_object(object)
+                ) as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_additions_o(layer, object)
+    }
+
+    fn triple_removals_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(Box::new(
+                    cached
+                        .internal_triple_removals_by_object()
+                        .seek_object(object)
+                ) as Box<dyn Iterator<Item = _> + Send>));
+            }
+        }
+
+        self.inner.triple_removals_o(layer, object)
+    }
 }
 
 #[cfg(test)]

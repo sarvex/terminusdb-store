@@ -4,7 +4,7 @@ use super::file::*;
 use crate::layer::{
     delta_rollup, delta_rollup_upto, layer_triple_exists, BaseLayer, ChildLayer, IdTriple,
     InternalLayer, InternalLayerTripleSubjectIterator, LayerBuilder, RollupLayer,
-    SimpleLayerBuilder, OptInternalLayerTriplePredicateIterator, InternalLayerTriplePredicateIterator,
+    SimpleLayerBuilder, OptInternalLayerTriplePredicateIterator, InternalLayerTriplePredicateIterator,InternalLayerTripleObjectIterator
 };
 use crate::structure::{AdjacencyList, LogArray, MonotonicLogArray, WaveletTree};
 use std::io;
@@ -174,6 +174,18 @@ pub trait LayerStore: 'static + Send + Sync {
         &self,
         layer: [u32; 5],
         predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>;
+
+    fn triple_removals_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>;
+
+    fn triple_additions_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>;
 
     fn triple_removals_p(
@@ -930,6 +942,202 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
         })
     }
 
+    fn triple_addition_files_by_object(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<(
+                        Self::File,
+                        Self::File,
+                        AdjacencyListFiles<Self::File>,
+                        AdjacencyListFiles<Self::File>,
+                    )>,
+                > + Send,
+        >,
+    > {
+        let self_ = self.clone();
+        Box::pin(async move {
+            // does layer exist?
+            if self_.directory_exists(layer).await? {
+                let (
+                    subjects_file,
+                    objects_file,
+                    o_ps_aj_nums_file,
+                    o_ps_aj_bits_file,
+                    o_ps_aj_bit_index_blocks_file,
+                    o_ps_aj_bit_index_sblocks_file,
+                );
+                let (
+                    s_p_aj_nums_file,
+                    s_p_aj_bits_file,
+                    s_p_aj_bit_index_blocks_file,
+                    s_p_aj_bit_index_sblocks_file,
+                );
+                if self_.layer_has_parent(layer).await? {
+                    // this is a child layer
+                    o_ps_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.pos_o_ps_adjacency_list_nums)
+                        .await?;
+                    o_ps_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.pos_o_ps_adjacency_list_bits)
+                        .await?;
+                    o_ps_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.pos_o_ps_adjacency_list_bit_index_blocks)
+                        .await?;
+                    o_ps_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.pos_o_ps_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    s_p_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_nums)
+                        .await?;
+                    s_p_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_bits)
+                        .await?;
+                    s_p_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_bit_index_blocks)
+                        .await?;
+                    s_p_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    subjects_file = self_.get_file(layer, FILENAMES.pos_subjects).await?;
+                    objects_file = self_.get_file(layer, FILENAMES.pos_objects).await?;
+                } else {
+                    // this is a base layer
+                    o_ps_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.base_o_ps_adjacency_list_nums)
+                        .await?;
+                    o_ps_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.base_o_ps_adjacency_list_bits)
+                        .await?;
+                    o_ps_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.base_o_ps_adjacency_list_bit_index_blocks)
+                        .await?;
+                    o_ps_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.base_o_ps_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    s_p_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.base_s_p_adjacency_list_nums)
+                        .await?;
+                    s_p_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.base_s_p_adjacency_list_bits)
+                        .await?;
+                    s_p_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.base_s_p_adjacency_list_bit_index_blocks)
+                        .await?;
+                    s_p_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.base_s_p_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    subjects_file = self_.get_file(layer, FILENAMES.base_subjects).await?;
+                    objects_file = self_.get_file(layer, FILENAMES.base_objects).await?;
+                }
+
+                let o_ps_aj_files = AdjacencyListFiles {
+                    bitindex_files: BitIndexFiles {
+                        bits_file: o_ps_aj_bits_file,
+                        blocks_file: o_ps_aj_bit_index_blocks_file,
+                        sblocks_file: o_ps_aj_bit_index_sblocks_file,
+                    },
+                    nums_file: o_ps_aj_nums_file,
+                };
+                let s_p_aj_files = AdjacencyListFiles {
+                    bitindex_files: BitIndexFiles {
+                        bits_file: s_p_aj_bits_file,
+                        blocks_file: s_p_aj_bit_index_blocks_file,
+                        sblocks_file: s_p_aj_bit_index_sblocks_file,
+                    },
+                    nums_file: s_p_aj_nums_file,
+                };
+
+                Ok((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files))
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_removal_files_by_object(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<Option<(
+                        Self::File,
+                        Self::File,
+                        AdjacencyListFiles<Self::File>,
+                        AdjacencyListFiles<Self::File>,
+                    )>>,
+                > + Send,
+        >,
+    > {
+        let self_ = self.clone();
+        Box::pin(async move {
+            // does layer exist?
+            if self_.directory_exists(layer).await? {
+                if self_.layer_has_parent(layer).await? {
+                    // this is a child layer
+                    let o_ps_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.neg_o_ps_adjacency_list_nums)
+                        .await?;
+                    let o_ps_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.neg_o_ps_adjacency_list_bits)
+                        .await?;
+                    let o_ps_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.neg_o_ps_adjacency_list_bit_index_blocks)
+                        .await?;
+                    let o_ps_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.neg_o_ps_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    let s_p_aj_nums_file = self_
+                        .get_file(layer, FILENAMES.neg_s_p_adjacency_list_nums)
+                        .await?;
+                    let s_p_aj_bits_file = self_
+                        .get_file(layer, FILENAMES.neg_s_p_adjacency_list_bits)
+                        .await?;
+                    let s_p_aj_bit_index_blocks_file = self_
+                        .get_file(layer, FILENAMES.neg_s_p_adjacency_list_bit_index_blocks)
+                        .await?;
+                    let s_p_aj_bit_index_sblocks_file = self_
+                        .get_file(layer, FILENAMES.neg_s_p_adjacency_list_bit_index_sblocks)
+                        .await?;
+
+                    let subjects_file = self_.get_file(layer, FILENAMES.neg_subjects).await?;
+                    let objects_file = self_.get_file(layer, FILENAMES.neg_objects).await?;
+
+                    let o_ps_aj_files = AdjacencyListFiles {
+                        bitindex_files: BitIndexFiles {
+                            bits_file: o_ps_aj_bits_file,
+                            blocks_file: o_ps_aj_bit_index_blocks_file,
+                            sblocks_file: o_ps_aj_bit_index_sblocks_file,
+                        },
+                        nums_file: o_ps_aj_nums_file,
+                    };
+                    let s_p_aj_files = AdjacencyListFiles {
+                        bitindex_files: BitIndexFiles {
+                            bits_file: s_p_aj_bits_file,
+                            blocks_file: s_p_aj_bit_index_blocks_file,
+                            sblocks_file: s_p_aj_bit_index_sblocks_file,
+                        },
+                        nums_file: s_p_aj_nums_file,
+                    };
+
+                    Ok(Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)))
+                } else {
+                    // this is a base layer
+                    Ok(None)
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
 }
 
 pub fn name_to_string(name: [u32; 5]) -> String {
@@ -1416,6 +1624,44 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
             }
         })
     }
+
+    fn triple_additions_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            let (subjects_file, objects_file, o_ps_aj_files, s_p_aj_files) =
+                self_.triple_addition_files_by_object(layer).await?;
+
+            Ok(Box::new(
+                file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+            ) as Box<dyn Iterator<Item = _> + Send>)
+        })
+    }
+
+    fn triple_removals_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            if let Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)) =
+                self_.triple_removal_files_by_object(layer).await? {
+                    
+                    Ok(Box::new(
+                        file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+                    ) as Box<dyn Iterator<Item = _> + Send>)
+                }
+            else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
 }
 
 pub(crate) async fn file_triple_exists<F: FileLoad + FileStore>(
@@ -1498,4 +1744,29 @@ pub(crate) async fn file_triple_iterator_by_predicate<F: FileLoad + FileStore>(
         )),
         None => OptInternalLayerTriplePredicateIterator(None)
     })
+}
+
+pub(crate) async fn file_triple_iterator_by_object<F: FileLoad + FileStore>(
+    subjects_file: F,
+    objects_file: F,
+    o_ps_adjacency_list_files: AdjacencyListFiles<F>,
+    s_p_adjacency_list_files: AdjacencyListFiles<F>,
+    object: u64,
+) -> io::Result<impl Iterator<Item=IdTriple>+Send> {
+    let subjects: Option<MonotonicLogArray> = subjects_file
+        .map_if_exists()
+        .await?
+        .map(|l| LogArray::parse(l).unwrap().into());
+    let objects: Option<MonotonicLogArray> = objects_file
+        .map_if_exists()
+        .await?
+        .map(|l| LogArray::parse(l).unwrap().into());
+
+    let o_ps_maps = o_ps_adjacency_list_files.map_all().await?;
+    let s_p_maps = s_p_adjacency_list_files.map_all().await?;
+    let o_ps_aj: AdjacencyList = o_ps_maps.into();
+    let s_p_aj: AdjacencyList = s_p_maps.into();
+
+    Ok(InternalLayerTripleObjectIterator::new(subjects, objects, o_ps_aj, s_p_aj)
+       .seek_object(object))
 }

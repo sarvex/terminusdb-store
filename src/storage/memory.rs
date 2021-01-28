@@ -235,9 +235,9 @@ impl MemoryLayerStore {
                     }
                     LayerFiles::Child(files) => {
                         let (s_p_aj_files, sp_o_aj_files, subjects_file);
-                        s_p_aj_files = files.pos_s_p_adjacency_list_files.clone();
-                        sp_o_aj_files = files.pos_sp_o_adjacency_list_files.clone();
-                        subjects_file = files.pos_subjects_file.clone();
+                        s_p_aj_files = files.neg_s_p_adjacency_list_files.clone();
+                        sp_o_aj_files = files.neg_sp_o_adjacency_list_files.clone();
+                        subjects_file = files.neg_subjects_file.clone();
 
                         Ok(Some((subjects_file, s_p_aj_files, sp_o_aj_files)))
                     }
@@ -289,9 +289,90 @@ impl MemoryLayerStore {
                         Ok(None)
                     }
                     LayerFiles::Child(files) => {
-                        let predicate_wavelet_files = files.pos_predicate_wavelet_tree_files.clone();
+                        let predicate_wavelet_files = files.neg_predicate_wavelet_tree_files.clone();
 
                         Ok(Some(predicate_wavelet_files))
+                    }
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_addition_files_by_object(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<(
+                        MemoryBackedStore,
+                        MemoryBackedStore,
+                        AdjacencyListFiles<MemoryBackedStore>,
+                        AdjacencyListFiles<MemoryBackedStore>,
+                    )>,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                let (o_ps_aj_files, s_p_aj_files, subjects_file, objects_file);
+                match files {
+                    LayerFiles::Base(files) => {
+                        o_ps_aj_files = files.o_ps_adjacency_list_files.clone();
+                        s_p_aj_files = files.s_p_adjacency_list_files.clone();
+                        subjects_file = files.subjects_file.clone();
+                        objects_file = files.objects_file.clone();
+                    }
+                    LayerFiles::Child(files) => {
+                        o_ps_aj_files = files.pos_o_ps_adjacency_list_files.clone();
+                        s_p_aj_files = files.pos_s_p_adjacency_list_files.clone();
+                        subjects_file = files.pos_subjects_file.clone();
+                        objects_file = files.pos_objects_file.clone();
+                    }
+                }
+
+                Ok((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files))
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_removal_files_by_object(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<
+                        Option<(
+                            MemoryBackedStore,
+                            MemoryBackedStore,
+                            AdjacencyListFiles<MemoryBackedStore>,
+                            AdjacencyListFiles<MemoryBackedStore>,
+                        )>,
+                    >,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                match files {
+                    LayerFiles::Base(_files) => {
+                        // base layer has no removals
+                        Ok(None)
+                    }
+                    LayerFiles::Child(files) => {
+                        let o_ps_aj_files = files.neg_o_ps_adjacency_list_files.clone();
+                        let s_p_aj_files = files.neg_s_p_adjacency_list_files.clone();
+                        let subjects_file = files.neg_subjects_file.clone();
+                        let objects_file = files.neg_objects_file.clone();
+
+                        Ok(Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)))
                     }
                 }
             } else {
@@ -1041,6 +1122,44 @@ impl LayerStore for MemoryLayerStore {
                         .await?)
                    as Box<dyn Iterator<Item=_>+Send>)
             } else {
+                Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
+
+    fn triple_additions_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            let (subjects_file, objects_file, o_ps_aj_files, s_p_aj_files) =
+                self_.triple_addition_files_by_object(layer).await?;
+
+            Ok(Box::new(
+                file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+            ) as Box<dyn Iterator<Item = _> + Send>)
+        })
+    }
+
+    fn triple_removals_o(
+        &self,
+        layer: [u32; 5],
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
+        let self_ = self.clone();
+        Box::pin(async move {
+            if let Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)) =
+                self_.triple_removal_files_by_object(layer).await? {
+                    
+                    Ok(Box::new(
+                        file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+                    ) as Box<dyn Iterator<Item = _> + Send>)
+                }
+            else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
         })
