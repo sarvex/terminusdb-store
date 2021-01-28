@@ -390,7 +390,7 @@ mod tests {
     async fn object_additions_iterator_for_object() {
         let base_layer = example_base_layer().await;
 
-        let triples: Vec<_> = base_layer.triple_additions_o(5).collect();
+        let triples: Vec<_> = base_layer.internal_triple_additions_o(5).collect();
 
         let expected = vec![
             IdTriple::new(2, 1, 5),
@@ -405,7 +405,7 @@ mod tests {
     async fn object_additions_iterator_for_nonexistent_object() {
         let base_layer = example_base_layer().await;
 
-        let triples: Vec<_> = base_layer.triple_additions_o(4).collect();
+        let triples: Vec<_> = base_layer.internal_triple_additions_o(4).collect();
 
         assert!(triples.is_empty());
     }

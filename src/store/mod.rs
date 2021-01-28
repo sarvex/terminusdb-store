@@ -347,25 +347,41 @@ impl StoreLayer {
             .triple_removals_sp(self.layer.name(), subject, predicate)
     }
 
-    pub fn triple_additions_p(&self, predicate: u64) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+    pub fn triple_additions_p(
+        &self,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
         self.store
             .layer_store
             .triple_additions_p(self.layer.name(), predicate)
     }
 
-    pub fn triple_removals_p(&self, predicate: u64) -> Pin<Box<dyn Future<Output=io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+    pub fn triple_removals_p(
+        &self,
+        predicate: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
         self.store
             .layer_store
             .triple_removals_p(self.layer.name(), predicate)
     }
 
-    pub fn triple_additions_o(&self, object: u64) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+    pub fn triple_additions_o(
+        &self,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
         self.store
             .layer_store
             .triple_additions_o(self.layer.name(), object)
     }
 
-    pub fn triple_removals_o(&self, object: u64) -> Pin<Box<dyn Future<Output=io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>>+Send>> {
+    pub fn triple_removals_o(
+        &self,
+        object: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>
+    {
         self.store
             .layer_store
             .triple_removals_o(self.layer.name(), object)
@@ -806,7 +822,7 @@ mod tests {
 
         let rebase_builder = layer2.open_write().await.unwrap();
 
-        let _ = rebase_builder.apply_delta(&delta).unwrap();
+        let _ = rebase_builder.apply_delta(&delta).await.unwrap();
 
         let rebase_layer = rebase_builder.commit().await.unwrap();
 

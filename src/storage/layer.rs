@@ -3,8 +3,9 @@ use super::consts::FILENAMES;
 use super::file::*;
 use crate::layer::{
     delta_rollup, delta_rollup_upto, layer_triple_exists, BaseLayer, ChildLayer, IdTriple,
-    InternalLayer, InternalLayerTripleSubjectIterator, LayerBuilder, RollupLayer,
-    SimpleLayerBuilder, OptInternalLayerTriplePredicateIterator, InternalLayerTriplePredicateIterator,InternalLayerTripleObjectIterator
+    InternalLayer, InternalLayerTripleObjectIterator, InternalLayerTriplePredicateIterator,
+    InternalLayerTripleSubjectIterator, LayerBuilder, OptInternalLayerTriplePredicateIterator,
+    RollupLayer, SimpleLayerBuilder,
 };
 use crate::structure::{AdjacencyList, LogArray, MonotonicLogArray, WaveletTree};
 use std::io;
@@ -848,13 +849,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn predicate_wavelet_addition_files(
         &self,
         layer: [u32; 5],
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = io::Result<BitIndexFiles<Self::File>>,
-                > + Send,
-        >,
-    > {
+    ) -> Pin<Box<dyn Future<Output = io::Result<BitIndexFiles<Self::File>>> + Send>> {
         let self_ = self.clone();
         Box::pin(async move {
             // does layer exist?
@@ -873,7 +868,10 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
                         .get_file(layer, FILENAMES.pos_predicate_wavelet_tree_bit_index_blocks)
                         .await?;
                     wavelet_bit_index_sblocks_file = self_
-                        .get_file(layer, FILENAMES.pos_predicate_wavelet_tree_bit_index_sblocks)
+                        .get_file(
+                            layer,
+                            FILENAMES.pos_predicate_wavelet_tree_bit_index_sblocks,
+                        )
                         .await?;
                 } else {
                     // this is a base layer
@@ -881,10 +879,16 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
                         .get_file(layer, FILENAMES.base_predicate_wavelet_tree_bits)
                         .await?;
                     wavelet_bit_index_blocks_file = self_
-                        .get_file(layer, FILENAMES.base_predicate_wavelet_tree_bit_index_blocks)
+                        .get_file(
+                            layer,
+                            FILENAMES.base_predicate_wavelet_tree_bit_index_blocks,
+                        )
                         .await?;
                     wavelet_bit_index_sblocks_file = self_
-                        .get_file(layer, FILENAMES.base_predicate_wavelet_tree_bit_index_sblocks)
+                        .get_file(
+                            layer,
+                            FILENAMES.base_predicate_wavelet_tree_bit_index_sblocks,
+                        )
                         .await?;
                 }
 
@@ -903,13 +907,7 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     fn predicate_wavelet_removal_files(
         &self,
         layer: [u32; 5],
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = io::Result<Option<BitIndexFiles<Self::File>>>,
-                > + Send,
-        >,
-    > {
+    ) -> Pin<Box<dyn Future<Output = io::Result<Option<BitIndexFiles<Self::File>>>> + Send>> {
         let self_ = self.clone();
         Box::pin(async move {
             // does layer exist?
@@ -923,7 +921,10 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
                         .get_file(layer, FILENAMES.neg_predicate_wavelet_tree_bit_index_blocks)
                         .await?;
                     let wavelet_bit_index_sblocks_file = self_
-                        .get_file(layer, FILENAMES.neg_predicate_wavelet_tree_bit_index_sblocks)
+                        .get_file(
+                            layer,
+                            FILENAMES.neg_predicate_wavelet_tree_bit_index_sblocks,
+                        )
                         .await?;
                     let bitindex_files = BitIndexFiles {
                         bits_file: wavelet_bits_file,
@@ -935,7 +936,6 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
                     // this is a base layer
                     Ok(None)
                 }
-
             } else {
                 Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
             }
@@ -1067,12 +1067,14 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
     ) -> Pin<
         Box<
             dyn Future<
-                    Output = io::Result<Option<(
-                        Self::File,
-                        Self::File,
-                        AdjacencyListFiles<Self::File>,
-                        AdjacencyListFiles<Self::File>,
-                    )>>,
+                    Output = io::Result<
+                        Option<(
+                            Self::File,
+                            Self::File,
+                            AdjacencyListFiles<Self::File>,
+                            AdjacencyListFiles<Self::File>,
+                        )>,
+                    >,
                 > + Send,
         >,
     > {
@@ -1128,7 +1130,12 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
                         nums_file: s_p_aj_nums_file,
                     };
 
-                    Ok(Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)))
+                    Ok(Some((
+                        subjects_file,
+                        objects_file,
+                        o_ps_aj_files,
+                        s_p_aj_files,
+                    )))
                 } else {
                     // this is a base layer
                     Ok(None)
@@ -1520,7 +1527,8 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
             Ok(Box::new(
                 file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                     .await?
-                    .seek_subject(subject),
+                    .seek_subject(subject)
+                    .take_while(move |t| t.subject == subject),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1537,7 +1545,8 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
                 Ok(Box::new(
                     file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                         .await?
-                        .seek_subject(subject),
+                        .seek_subject(subject)
+                        .take_while(move |t| t.subject == subject),
                 ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
@@ -1560,7 +1569,8 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
             Ok(Box::new(
                 file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                     .await?
-                    .seek_subject_predicate(subject, predicate),
+                    .seek_subject_predicate(subject, predicate)
+                    .take_while(move |t| t.predicate == predicate && t.subject == subject),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1578,7 +1588,8 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
                 Ok(Box::new(
                     file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                         .await?
-                        .seek_subject_predicate(subject, predicate),
+                        .seek_subject_predicate(subject, predicate)
+                        .take_while(move |t| t.predicate == predicate && t.subject == subject),
                 ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
@@ -1599,9 +1610,15 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
             let predicate_wavelet_files = self_.predicate_wavelet_addition_files(layer).await?;
 
             Ok(Box::new(
-                file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
-                    .await?)
-               as Box<dyn Iterator<Item=_>+Send>)
+                file_triple_iterator_by_predicate(
+                    subjects_file,
+                    s_p_aj_files,
+                    sp_o_aj_files,
+                    predicate_wavelet_files,
+                    predicate,
+                )
+                .await?,
+            ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
 
@@ -1614,11 +1631,21 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
         let files_fut = self.triple_removal_files(layer);
         let wavelet_files_fut = self.predicate_wavelet_removal_files(layer);
         Box::pin(async move {
-            if let (Some((subjects_file, s_p_aj_files, sp_o_aj_files)), Some(predicate_wavelet_files)) = (files_fut.await?, wavelet_files_fut.await?) {
+            if let (
+                Some((subjects_file, s_p_aj_files, sp_o_aj_files)),
+                Some(predicate_wavelet_files),
+            ) = (files_fut.await?, wavelet_files_fut.await?)
+            {
                 Ok(Box::new(
-                    file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
-                        .await?)
-                   as Box<dyn Iterator<Item=_>+Send>)
+                    file_triple_iterator_by_predicate(
+                        subjects_file,
+                        s_p_aj_files,
+                        sp_o_aj_files,
+                        predicate_wavelet_files,
+                        predicate,
+                    )
+                    .await?,
+                ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
@@ -1637,7 +1664,15 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
                 self_.triple_addition_files_by_object(layer).await?;
 
             Ok(Box::new(
-                file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+                file_triple_iterator_by_object(
+                    subjects_file,
+                    objects_file,
+                    o_ps_aj_files,
+                    s_p_aj_files,
+                    object,
+                )
+                .await?
+                .take_while(move |t| t.object == object),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1651,13 +1686,20 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
         let self_ = self.clone();
         Box::pin(async move {
             if let Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)) =
-                self_.triple_removal_files_by_object(layer).await? {
-                    
-                    Ok(Box::new(
-                        file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
-                    ) as Box<dyn Iterator<Item = _> + Send>)
-                }
-            else {
+                self_.triple_removal_files_by_object(layer).await?
+            {
+                Ok(Box::new(
+                    file_triple_iterator_by_object(
+                        subjects_file,
+                        objects_file,
+                        o_ps_aj_files,
+                        s_p_aj_files,
+                        object,
+                    )
+                    .await?
+                    .take_while(move |t| t.object == object),
+                ) as Box<dyn Iterator<Item = _> + Send>)
+            } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
         })
@@ -1718,7 +1760,7 @@ pub(crate) async fn file_triple_iterator_by_predicate<F: FileLoad + FileStore>(
     sp_o_adjacency_list_files: AdjacencyListFiles<F>,
     predicate_wavelet_files: BitIndexFiles<F>,
     predicate: u64,
-) -> io::Result<impl Iterator<Item=IdTriple>+Send> {
+) -> io::Result<impl Iterator<Item = IdTriple> + Send> {
     let s_p_maps = s_p_adjacency_list_files.map_all().await?;
     let sp_o_maps = sp_o_adjacency_list_files.map_all().await?;
     let predicate_wavelet_maps = predicate_wavelet_files.map_all().await?;
@@ -1735,14 +1777,9 @@ pub(crate) async fn file_triple_iterator_by_predicate<F: FileLoad + FileStore>(
     let wtree = WaveletTree::from_parts(wavelet_bits, width);
     Ok(match wtree.lookup(predicate) {
         Some(lookup) => OptInternalLayerTriplePredicateIterator(Some(
-            InternalLayerTriplePredicateIterator::new(
-                lookup,
-                subjects,
-                s_p_aj,
-                sp_o_aj
-            ),
+            InternalLayerTriplePredicateIterator::new(lookup, subjects, s_p_aj, sp_o_aj),
         )),
-        None => OptInternalLayerTriplePredicateIterator(None)
+        None => OptInternalLayerTriplePredicateIterator(None),
     })
 }
 
@@ -1752,7 +1789,7 @@ pub(crate) async fn file_triple_iterator_by_object<F: FileLoad + FileStore>(
     o_ps_adjacency_list_files: AdjacencyListFiles<F>,
     s_p_adjacency_list_files: AdjacencyListFiles<F>,
     object: u64,
-) -> io::Result<impl Iterator<Item=IdTriple>+Send> {
+) -> io::Result<impl Iterator<Item = IdTriple> + Send> {
     let subjects: Option<MonotonicLogArray> = subjects_file
         .map_if_exists()
         .await?
@@ -1767,6 +1804,8 @@ pub(crate) async fn file_triple_iterator_by_object<F: FileLoad + FileStore>(
     let o_ps_aj: AdjacencyList = o_ps_maps.into();
     let s_p_aj: AdjacencyList = s_p_maps.into();
 
-    Ok(InternalLayerTripleObjectIterator::new(subjects, objects, o_ps_aj, s_p_aj)
-       .seek_object(object))
+    Ok(
+        InternalLayerTripleObjectIterator::new(subjects, objects, o_ps_aj, s_p_aj)
+            .seek_object(object),
+    )
 }

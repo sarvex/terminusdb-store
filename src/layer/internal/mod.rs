@@ -228,7 +228,53 @@ pub trait InternalLayerImpl {
         )
     }
 
-    fn internal_triple_additions_by_predicate(
+    fn internal_triple_additions_s(
+        &self,
+        subject: u64,
+    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_additions()
+                .seek_subject(subject)
+                .take_while(move |t| t.subject == subject),
+        )
+    }
+
+    fn internal_triple_removals_s(
+        &self,
+        subject: u64,
+    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_removals()
+                .seek_subject(subject)
+                .take_while(move |t| t.subject == subject),
+        )
+    }
+
+    fn internal_triple_additions_sp(
+        &self,
+        subject: u64,
+        predicate: u64,
+    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_additions()
+                .seek_subject_predicate(subject, predicate)
+                .take_while(move |t| t.predicate == predicate && t.subject == subject),
+        )
+    }
+
+    fn internal_triple_removals_sp(
+        &self,
+        subject: u64,
+        predicate: u64,
+    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_removals()
+                .seek_subject_predicate(subject, predicate)
+                .take_while(move |t| t.predicate == predicate && t.subject == subject),
+        )
+    }
+
+    fn internal_triple_additions_p(
         &self,
         predicate: u64,
     ) -> OptInternalLayerTriplePredicateIterator {
@@ -245,7 +291,7 @@ pub trait InternalLayerImpl {
         }
     }
 
-    fn internal_triple_removals_by_predicate(
+    fn internal_triple_removals_p(
         &self,
         predicate: u64,
     ) -> OptInternalLayerTriplePredicateIterator {
@@ -269,6 +315,17 @@ pub trait InternalLayerImpl {
         }
     }
 
+    fn internal_triple_additions_o(
+        &self,
+        object: u64,
+    ) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_additions_by_object()
+                .seek_object(object)
+                .take_while(move |t| t.object == object),
+        )
+    }
+
     fn internal_triple_additions_by_object(&self) -> OptInternalLayerTripleObjectIterator {
         OptInternalLayerTripleObjectIterator(Some(InternalLayerTripleObjectIterator::new(
             self.pos_subjects().cloned(),
@@ -276,6 +333,14 @@ pub trait InternalLayerImpl {
             self.pos_o_ps_adjacency_list().clone(),
             self.pos_s_p_adjacency_list().clone(),
         )))
+    }
+
+    fn internal_triple_removals_o(&self, object: u64) -> Box<dyn Iterator<Item = IdTriple> + Send> {
+        Box::new(
+            self.internal_triple_removals_by_object()
+                .seek_object(object)
+                .take_while(move |t| t.object == object),
+        )
     }
 
     fn internal_triple_removals_by_object(&self) -> OptInternalLayerTripleObjectIterator {

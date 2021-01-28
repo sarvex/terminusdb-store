@@ -1116,7 +1116,7 @@ pub mod tests {
         let child_layer = fut.await.unwrap();
 
         let result: Vec<_> = child_layer
-            .triple_additions()
+            .internal_triple_additions()
             .map(|t| (t.subject, t.predicate, t.object))
             .collect();
 
@@ -1145,7 +1145,7 @@ pub mod tests {
         let child_layer = fut.await.unwrap();
 
         let result: Vec<_> = child_layer
-            .triple_removals()
+            .internal_triple_removals()
             .map(|t| (t.subject, t.predicate, t.object))
             .collect();
 

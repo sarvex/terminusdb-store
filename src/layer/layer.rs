@@ -376,17 +376,17 @@ mod tests {
 
         // TODO why are we not using these results?
         let _base_triples_additions: Vec<_> = base
-            .triple_additions()
+            .internal_triple_additions()
             .map(|t| child.id_triple_to_string(&t).unwrap())
             .collect();
 
         let _triples_additions: Vec<_> = child
-            .triple_additions()
+            .internal_triple_additions()
             .map(|t| child.id_triple_to_string(&t).unwrap())
             .collect();
 
         let _triples_removals: Vec<_> = child
-            .triple_removals()
+            .internal_triple_removals()
             .map(|t| child.id_triple_to_string(&t).unwrap())
             .collect();
 

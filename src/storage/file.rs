@@ -6,7 +6,7 @@ use futures::io;
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::structure::{BitIndex, AdjacencyList};
+use crate::structure::{AdjacencyList, BitIndex};
 
 pub trait FileStore: Clone + Send + Sync {
     type Write: AsyncWrite + Unpin + Send;

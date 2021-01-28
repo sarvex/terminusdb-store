@@ -251,9 +251,7 @@ impl MemoryLayerStore {
     fn predicate_wavelet_addition_files(
         &self,
         layer: [u32; 5],
-    ) -> Pin<
-        Box<dyn Future<Output = io::Result<BitIndexFiles<MemoryBackedStore>>> + Send>>
-    {
+    ) -> Pin<Box<dyn Future<Output = io::Result<BitIndexFiles<MemoryBackedStore>>> + Send>> {
         let guard = self.layers.read();
         Box::pin(async move {
             if let Some((_, _, files)) = guard.await.get(&layer) {
@@ -277,8 +275,7 @@ impl MemoryLayerStore {
     fn predicate_wavelet_removal_files(
         &self,
         layer: [u32; 5],
-    ) -> Pin<
-        Box<dyn Future<Output = io::Result<Option<BitIndexFiles<MemoryBackedStore>>>> + Send>>
+    ) -> Pin<Box<dyn Future<Output = io::Result<Option<BitIndexFiles<MemoryBackedStore>>>> + Send>>
     {
         let guard = self.layers.read();
         Box::pin(async move {
@@ -289,7 +286,8 @@ impl MemoryLayerStore {
                         Ok(None)
                     }
                     LayerFiles::Child(files) => {
-                        let predicate_wavelet_files = files.neg_predicate_wavelet_tree_files.clone();
+                        let predicate_wavelet_files =
+                            files.neg_predicate_wavelet_tree_files.clone();
 
                         Ok(Some(predicate_wavelet_files))
                     }
@@ -372,7 +370,12 @@ impl MemoryLayerStore {
                         let subjects_file = files.neg_subjects_file.clone();
                         let objects_file = files.neg_objects_file.clone();
 
-                        Ok(Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)))
+                        Ok(Some((
+                            subjects_file,
+                            objects_file,
+                            o_ps_aj_files,
+                            s_p_aj_files,
+                        )))
                     }
                 }
             } else {
@@ -1022,7 +1025,8 @@ impl LayerStore for MemoryLayerStore {
             Ok(Box::new(
                 file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                     .await?
-                    .seek_subject(subject),
+                    .seek_subject(subject)
+                    .take_while(move |t| t.subject == subject),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1039,7 +1043,8 @@ impl LayerStore for MemoryLayerStore {
                 Ok(Box::new(
                     file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                         .await?
-                        .seek_subject(subject),
+                        .seek_subject(subject)
+                        .take_while(move |t| t.subject == subject),
                 ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
@@ -1062,7 +1067,8 @@ impl LayerStore for MemoryLayerStore {
             Ok(Box::new(
                 file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                     .await?
-                    .seek_subject_predicate(subject, predicate),
+                    .seek_subject_predicate(subject, predicate)
+                    .take_while(move |t| t.predicate == predicate && t.subject == subject),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1080,7 +1086,8 @@ impl LayerStore for MemoryLayerStore {
                 Ok(Box::new(
                     file_triple_iterator(subjects_file, s_p_aj_files, sp_o_aj_files)
                         .await?
-                        .seek_subject_predicate(subject, predicate),
+                        .seek_subject_predicate(subject, predicate)
+                        .take_while(move |t| t.predicate == predicate && t.subject == subject),
                 ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
@@ -1101,9 +1108,15 @@ impl LayerStore for MemoryLayerStore {
             let predicate_wavelet_files = self_.predicate_wavelet_addition_files(layer).await?;
 
             Ok(Box::new(
-                file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
-                    .await?)
-               as Box<dyn Iterator<Item=_>+Send>)
+                file_triple_iterator_by_predicate(
+                    subjects_file,
+                    s_p_aj_files,
+                    sp_o_aj_files,
+                    predicate_wavelet_files,
+                    predicate,
+                )
+                .await?,
+            ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
 
@@ -1116,11 +1129,21 @@ impl LayerStore for MemoryLayerStore {
         let files_fut = self.triple_removal_files(layer);
         let wavelet_files_fut = self.predicate_wavelet_removal_files(layer);
         Box::pin(async move {
-            if let (Some((subjects_file, s_p_aj_files, sp_o_aj_files)), Some(predicate_wavelet_files)) = (files_fut.await?, wavelet_files_fut.await?) {
+            if let (
+                Some((subjects_file, s_p_aj_files, sp_o_aj_files)),
+                Some(predicate_wavelet_files),
+            ) = (files_fut.await?, wavelet_files_fut.await?)
+            {
                 Ok(Box::new(
-                    file_triple_iterator_by_predicate(subjects_file, s_p_aj_files, sp_o_aj_files, predicate_wavelet_files, predicate)
-                        .await?)
-                   as Box<dyn Iterator<Item=_>+Send>)
+                    file_triple_iterator_by_predicate(
+                        subjects_file,
+                        s_p_aj_files,
+                        sp_o_aj_files,
+                        predicate_wavelet_files,
+                        predicate,
+                    )
+                    .await?,
+                ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
@@ -1139,7 +1162,15 @@ impl LayerStore for MemoryLayerStore {
                 self_.triple_addition_files_by_object(layer).await?;
 
             Ok(Box::new(
-                file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
+                file_triple_iterator_by_object(
+                    subjects_file,
+                    objects_file,
+                    o_ps_aj_files,
+                    s_p_aj_files,
+                    object,
+                )
+                .await?
+                .take_while(move |t| t.object == object),
             ) as Box<dyn Iterator<Item = _> + Send>)
         })
     }
@@ -1153,13 +1184,20 @@ impl LayerStore for MemoryLayerStore {
         let self_ = self.clone();
         Box::pin(async move {
             if let Some((subjects_file, objects_file, o_ps_aj_files, s_p_aj_files)) =
-                self_.triple_removal_files_by_object(layer).await? {
-                    
-                    Ok(Box::new(
-                        file_triple_iterator_by_object(subjects_file, objects_file, o_ps_aj_files, s_p_aj_files, object).await?
-                    ) as Box<dyn Iterator<Item = _> + Send>)
-                }
-            else {
+                self_.triple_removal_files_by_object(layer).await?
+            {
+                Ok(Box::new(
+                    file_triple_iterator_by_object(
+                        subjects_file,
+                        objects_file,
+                        o_ps_aj_files,
+                        s_p_aj_files,
+                        object,
+                    )
+                    .await?
+                    .take_while(move |t| t.object == object),
+                ) as Box<dyn Iterator<Item = _> + Send>)
+            } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
             }
         })

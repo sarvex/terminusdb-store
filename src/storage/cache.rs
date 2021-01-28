@@ -291,10 +291,7 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached.internal_triple_additions().seek_subject(subject),
-                )
-                    as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(cached.internal_triple_additions_s(subject)));
             }
         }
 
@@ -309,10 +306,7 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached.internal_triple_removals().seek_subject(subject),
-                )
-                    as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(cached.internal_triple_removals_s(subject)));
             }
         }
 
@@ -328,12 +322,9 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_additions()
-                        .seek_subject_predicate(subject, predicate),
-                )
-                    as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(
+                    cached.internal_triple_additions_sp(subject, predicate),
+                ));
             }
         }
 
@@ -349,12 +340,9 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_removals()
-                        .seek_subject_predicate(subject, predicate),
-                )
-                    as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(
+                    cached.internal_triple_removals_sp(subject, predicate),
+                ));
             }
         }
 
@@ -369,10 +357,10 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_additions_by_predicate(predicate)
-                ) as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(
+                    Box::new(cached.internal_triple_additions_p(predicate))
+                        as Box<dyn Iterator<Item = _> + Send>,
+                ));
             }
         }
 
@@ -387,10 +375,10 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_removals_by_predicate(predicate)
-                ) as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(
+                    Box::new(cached.internal_triple_removals_p(predicate))
+                        as Box<dyn Iterator<Item = _> + Send>,
+                ));
             }
         }
 
@@ -405,11 +393,7 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_additions_by_object()
-                        .seek_object(object)
-                ) as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(cached.internal_triple_additions_o(object)));
             }
         }
 
@@ -424,11 +408,7 @@ impl LayerStore for CachedLayerStore {
     {
         if let Some(cached) = self.cache.get_layer_from_cache(layer) {
             if !cached.is_rollup() {
-                return Box::pin(future::ok(Box::new(
-                    cached
-                        .internal_triple_removals_by_object()
-                        .seek_object(object)
-                ) as Box<dyn Iterator<Item = _> + Send>));
+                return Box::pin(future::ok(cached.internal_triple_removals_o(object)));
             }
         }
 
