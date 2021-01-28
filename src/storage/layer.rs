@@ -7,7 +7,10 @@ use crate::layer::{
     InternalLayerTripleSubjectIterator, LayerBuilder, OptInternalLayerTriplePredicateIterator,
     RollupLayer, SimpleLayerBuilder,
 };
+use crate::structure::bitarray::bitarray_len_from_file;
+use crate::structure::logarray::logarray_file_get_length_and_width;
 use crate::structure::{AdjacencyList, LogArray, MonotonicLogArray, WaveletTree};
+use std::convert::TryInto;
 use std::io;
 use std::sync::Arc;
 
@@ -194,6 +197,16 @@ pub trait LayerStore: 'static + Send + Sync {
         layer: [u32; 5],
         predicate: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn Iterator<Item = IdTriple> + Send>>> + Send>>;
+
+    fn triple_layer_addition_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>>;
+
+    fn triple_layer_removal_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>>;
 }
 
 pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
@@ -1145,6 +1158,87 @@ pub trait PersistentLayerStore: 'static + Send + Sync + Clone {
             }
         })
     }
+
+    fn triple_layer_addition_count_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<Output = io::Result<(Self::File, Self::File, BitIndexFiles<Self::File>)>>
+                + Send,
+        >,
+    > {
+        let self_ = self.clone();
+        Box::pin(async move {
+            // does layer exist?
+            if self_.directory_exists(layer).await? {
+                let (s_p_nums_file, sp_o_bits_file);
+                if self_.layer_has_parent(layer).await? {
+                    // this is a child layer
+                    s_p_nums_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_nums)
+                        .await?;
+                    sp_o_bits_file = self_
+                        .get_file(layer, FILENAMES.pos_sp_o_adjacency_list_bits)
+                        .await?;
+                } else {
+                    // this is a base layer
+                    s_p_nums_file = self_
+                        .get_file(layer, FILENAMES.base_s_p_adjacency_list_nums)
+                        .await?;
+                    sp_o_bits_file = self_
+                        .get_file(layer, FILENAMES.base_sp_o_adjacency_list_bits)
+                        .await?;
+                }
+
+                let predicate_wavelet_files = self_.predicate_wavelet_addition_files(layer).await?;
+                Ok((s_p_nums_file, sp_o_bits_file, predicate_wavelet_files))
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_layer_removal_count_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<
+                        Option<(Self::File, Self::File, BitIndexFiles<Self::File>)>,
+                    >,
+                > + Send,
+        >,
+    > {
+        let self_ = self.clone();
+        Box::pin(async move {
+            // does layer exist?
+            if self_.directory_exists(layer).await? {
+                if self_.layer_has_parent(layer).await? {
+                    // this is a child layer
+                    let s_p_nums_file = self_
+                        .get_file(layer, FILENAMES.pos_s_p_adjacency_list_nums)
+                        .await?;
+                    let sp_o_bits_file = self_
+                        .get_file(layer, FILENAMES.pos_sp_o_adjacency_list_bits)
+                        .await?;
+                    let predicate_wavelet_files =
+                        self_.predicate_wavelet_addition_files(layer).await?;
+                    Ok(Some((
+                        s_p_nums_file,
+                        sp_o_bits_file,
+                        predicate_wavelet_files,
+                    )))
+                } else {
+                    // this is a base layer
+                    Ok(None)
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
 }
 
 pub fn name_to_string(name: [u32; 5]) -> String {
@@ -1704,6 +1798,34 @@ impl<F: 'static + FileLoad + FileStore + Clone, T: 'static + PersistentLayerStor
             }
         })
     }
+
+    fn triple_layer_addition_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        let files_fut = self.triple_layer_addition_count_files(layer);
+        Box::pin(async move {
+            let (s_p_nums_file, sp_o_bits_file, predicate_wavelet_files) = files_fut.await?;
+            file_triple_layer_count(s_p_nums_file, sp_o_bits_file, predicate_wavelet_files).await
+        })
+    }
+
+    fn triple_layer_removal_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        let files_fut = self.triple_layer_removal_count_files(layer);
+        Box::pin(async move {
+            if let Some((s_p_nums_file, sp_o_bits_file, predicate_wavelet_files)) =
+                files_fut.await?
+            {
+                file_triple_layer_count(s_p_nums_file, sp_o_bits_file, predicate_wavelet_files)
+                    .await
+            } else {
+                Ok(0)
+            }
+        })
+    }
 }
 
 pub(crate) async fn file_triple_exists<F: FileLoad + FileStore>(
@@ -1808,4 +1930,21 @@ pub(crate) async fn file_triple_iterator_by_object<F: FileLoad + FileStore>(
         InternalLayerTripleObjectIterator::new(subjects, objects, o_ps_aj, s_p_aj)
             .seek_object(object),
     )
+}
+
+pub(crate) async fn file_triple_layer_count<F: FileLoad + FileStore>(
+    s_p_nums_file: F,
+    sp_o_bits_file: F,
+    predicate_wavelet_files: BitIndexFiles<F>,
+) -> io::Result<usize> {
+    let (_, width) = logarray_file_get_length_and_width(s_p_nums_file).await?;
+    let bits_len: usize = bitarray_len_from_file(sp_o_bits_file)
+        .await?
+        .try_into()
+        .unwrap();
+    let predicate_wavelet_maps = predicate_wavelet_files.map_all().await?;
+    let wavelet_bits = predicate_wavelet_maps.into();
+    let wtree = WaveletTree::from_parts(wavelet_bits, width);
+
+    Ok(bits_len - wtree.lookup(0).map(|l| l.len()).unwrap_or(0))
 }

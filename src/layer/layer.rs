@@ -130,11 +130,6 @@ pub trait Layer: Send + Sync {
     fn triple_count(&self) -> usize {
         self.triple_addition_count() - self.triple_removal_count()
     }
-
-    /// Returns the amount of triples that this layer adds.
-    fn triple_layer_addition_count(&self) -> usize;
-    /// Returns the amount of triples that this layer removes.
-    fn triple_layer_removal_count(&self) -> usize;
 }
 
 pub struct LayerCounts {

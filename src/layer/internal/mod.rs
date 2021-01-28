@@ -366,6 +366,24 @@ pub trait InternalLayerImpl {
             },
         )
     }
+
+    fn internal_triple_layer_addition_count(&self) -> usize {
+        self.pos_sp_o_adjacency_list().right_count()
+            - self
+                .pos_predicate_wavelet_tree()
+                .lookup(0)
+                .map(|l| l.len())
+                .unwrap_or(0)
+    }
+
+    fn internal_triple_layer_removal_count(&self) -> usize {
+        match self.neg_sp_o_adjacency_list() {
+            None => 0,
+            Some(adjacency_list) => adjacency_list.right_count()
+                - self.neg_predicate_wavelet_tree().expect("negative wavelet tree should exist when negative sp_o adjacency list exists")
+                .lookup(0).map(|l|l.len()).unwrap_or(0)
+        }
+    }
 }
 
 impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
@@ -567,30 +585,12 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
         Box::new(self.clone())
     }
 
-    fn triple_layer_addition_count(&self) -> usize {
-        self.pos_sp_o_adjacency_list().right_count()
-            - self
-                .pos_predicate_wavelet_tree()
-                .lookup(0)
-                .map(|l| l.len())
-                .unwrap_or(0)
-    }
-
-    fn triple_layer_removal_count(&self) -> usize {
-        match self.neg_sp_o_adjacency_list() {
-            None => 0,
-            Some(adjacency_list) => adjacency_list.right_count()
-                - self.neg_predicate_wavelet_tree().expect("negative wavelet tree should exist when negative sp_o adjacency list exists")
-                .lookup(0).map(|l|l.len()).unwrap_or(0)
-        }
-    }
-
     fn triple_addition_count(&self) -> usize {
-        let mut additions = self.triple_layer_addition_count();
+        let mut additions = self.internal_triple_layer_addition_count();
 
         let mut parent = self.immediate_parent();
         while parent.is_some() {
-            additions += parent.unwrap().triple_layer_addition_count();
+            additions += parent.unwrap().internal_triple_layer_addition_count();
 
             parent = parent.unwrap().immediate_parent();
         }
@@ -599,11 +599,11 @@ impl<T: 'static + InternalLayerImpl + Send + Sync + Clone> Layer for T {
     }
 
     fn triple_removal_count(&self) -> usize {
-        let mut removals = self.triple_layer_removal_count();
+        let mut removals = self.internal_triple_layer_removal_count();
 
         let mut parent = self.immediate_parent();
         while parent.is_some() {
-            removals += parent.unwrap().triple_layer_removal_count();
+            removals += parent.unwrap().internal_triple_layer_removal_count();
 
             parent = parent.unwrap().immediate_parent();
         }
@@ -953,7 +953,7 @@ mod tests {
 
         let layer = create_base_layer(&store);
 
-        assert_eq!(3, layer.triple_layer_addition_count());
+        assert_eq!(3, layer.triple_layer_addition_count().unwrap());
     }
 
     #[test]
@@ -971,8 +971,8 @@ mod tests {
 
         let layer = builder.commit().unwrap();
 
-        assert_eq!(1, layer.triple_layer_addition_count());
-        assert_eq!(1, layer.triple_layer_removal_count());
+        assert_eq!(1, layer.triple_layer_addition_count().unwrap());
+        assert_eq!(1, layer.triple_layer_removal_count().unwrap());
     }
 
     use crate::layer::base::tests::*;
@@ -1006,6 +1006,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(1, layer.triple_layer_addition_count());
+        assert_eq!(1, layer.internal_triple_layer_addition_count());
     }
 }

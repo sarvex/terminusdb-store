@@ -386,6 +386,23 @@ impl StoreLayer {
             .layer_store
             .triple_removals_o(self.layer.name(), object)
     }
+
+    /// Returns the amount of triples that this layer adds.
+    pub fn triple_layer_addition_count(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        self.store
+            .layer_store
+            .triple_layer_addition_count(self.layer.name())
+    }
+    /// Returns the amount of triples that this layer removes.
+    pub fn triple_layer_removal_count(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        self.store
+            .layer_store
+            .triple_layer_removal_count(self.layer.name())
+    }
 }
 
 impl Layer for StoreLayer {
@@ -463,14 +480,6 @@ impl Layer for StoreLayer {
 
     fn clone_boxed(&self) -> Box<dyn Layer> {
         Box::new(self.clone())
-    }
-
-    fn triple_layer_addition_count(&self) -> usize {
-        self.layer.triple_layer_addition_count()
-    }
-
-    fn triple_layer_removal_count(&self) -> usize {
-        self.layer.triple_layer_removal_count()
     }
 
     fn triple_addition_count(&self) -> usize {

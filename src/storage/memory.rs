@@ -383,6 +383,96 @@ impl MemoryLayerStore {
             }
         })
     }
+
+    fn triple_layer_addition_count_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<(
+                        MemoryBackedStore,
+                        MemoryBackedStore,
+                        BitIndexFiles<MemoryBackedStore>,
+                    )>,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        let predicate_wavelet_files_fut = self.predicate_wavelet_addition_files(layer);
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                let (s_p_nums_file, sp_o_bits_file);
+                match files {
+                    LayerFiles::Base(files) => {
+                        s_p_nums_file = files.s_p_adjacency_list_files.nums_file.clone();
+                        sp_o_bits_file = files
+                            .sp_o_adjacency_list_files
+                            .bitindex_files
+                            .bits_file
+                            .clone();
+                    }
+                    LayerFiles::Child(files) => {
+                        s_p_nums_file = files.pos_s_p_adjacency_list_files.nums_file.clone();
+                        sp_o_bits_file = files
+                            .pos_sp_o_adjacency_list_files
+                            .bitindex_files
+                            .bits_file
+                            .clone();
+                    }
+                }
+
+                let predicate_wavelet_files = predicate_wavelet_files_fut.await?;
+                Ok((s_p_nums_file, sp_o_bits_file, predicate_wavelet_files))
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
+
+    fn triple_layer_removal_count_files(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = io::Result<
+                        Option<(
+                            MemoryBackedStore,
+                            MemoryBackedStore,
+                            BitIndexFiles<MemoryBackedStore>,
+                        )>,
+                    >,
+                > + Send,
+        >,
+    > {
+        let guard = self.layers.read();
+        let predicate_wavelet_files_fut = self.predicate_wavelet_addition_files(layer);
+        Box::pin(async move {
+            if let Some((_, _, files)) = guard.await.get(&layer) {
+                match files {
+                    LayerFiles::Base(_files) => Ok(None),
+                    LayerFiles::Child(files) => {
+                        let s_p_nums_file = files.pos_s_p_adjacency_list_files.nums_file.clone();
+                        let sp_o_bits_file = files
+                            .pos_sp_o_adjacency_list_files
+                            .bitindex_files
+                            .bits_file
+                            .clone();
+                        let predicate_wavelet_files = predicate_wavelet_files_fut.await?;
+
+                        Ok(Some((
+                            s_p_nums_file,
+                            sp_o_bits_file,
+                            predicate_wavelet_files,
+                        )))
+                    }
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "layer not found"))
+            }
+        })
+    }
 }
 
 pub fn base_layer_memory_files() -> BaseLayerFiles<MemoryBackedStore> {
@@ -1199,6 +1289,34 @@ impl LayerStore for MemoryLayerStore {
                 ) as Box<dyn Iterator<Item = _> + Send>)
             } else {
                 Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = _> + Send>)
+            }
+        })
+    }
+
+    fn triple_layer_addition_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        let files_fut = self.triple_layer_addition_count_files(layer);
+        Box::pin(async move {
+            let (s_p_nums_file, sp_o_bits_file, predicate_wavelet_files) = files_fut.await?;
+            file_triple_layer_count(s_p_nums_file, sp_o_bits_file, predicate_wavelet_files).await
+        })
+    }
+
+    fn triple_layer_removal_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        let files_fut = self.triple_layer_removal_count_files(layer);
+        Box::pin(async move {
+            if let Some((s_p_nums_file, sp_o_bits_file, predicate_wavelet_files)) =
+                files_fut.await?
+            {
+                file_triple_layer_count(s_p_nums_file, sp_o_bits_file, predicate_wavelet_files)
+                    .await
+            } else {
+                Ok(0)
             }
         })
     }

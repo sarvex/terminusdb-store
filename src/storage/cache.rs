@@ -414,6 +414,32 @@ impl LayerStore for CachedLayerStore {
 
         self.inner.triple_removals_o(layer, object)
     }
+
+    fn triple_layer_addition_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(cached.internal_triple_layer_addition_count()));
+            }
+        }
+
+        self.inner.triple_layer_addition_count(layer)
+    }
+
+    fn triple_layer_removal_count(
+        &self,
+        layer: [u32; 5],
+    ) -> Pin<Box<dyn Future<Output = io::Result<usize>> + Send>> {
+        if let Some(cached) = self.cache.get_layer_from_cache(layer) {
+            if !cached.is_rollup() {
+                return Box::pin(future::ok(cached.internal_triple_layer_removal_count()));
+            }
+        }
+
+        self.inner.triple_layer_removal_count(layer)
+    }
 }
 
 #[cfg(test)]

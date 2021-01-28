@@ -215,6 +215,14 @@ impl SyncStoreLayer {
     ) -> io::Result<Box<dyn Iterator<Item = IdTriple> + Send>> {
         task_sync(self.inner.triple_removals_o(object))
     }
+
+    pub fn triple_layer_addition_count(&self) -> io::Result<usize> {
+        task_sync(self.inner.triple_layer_addition_count())
+    }
+
+    pub fn triple_layer_removal_count(&self) -> io::Result<usize> {
+        task_sync(self.inner.triple_layer_removal_count())
+    }
 }
 
 impl Layer for SyncStoreLayer {
@@ -292,14 +300,6 @@ impl Layer for SyncStoreLayer {
 
     fn clone_boxed(&self) -> Box<dyn Layer> {
         Box::new(self.clone())
-    }
-
-    fn triple_layer_addition_count(&self) -> usize {
-        self.inner.triple_layer_addition_count()
-    }
-
-    fn triple_layer_removal_count(&self) -> usize {
-        self.inner.triple_layer_removal_count()
     }
 
     fn triple_addition_count(&self) -> usize {
