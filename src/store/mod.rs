@@ -149,20 +149,21 @@ impl StoreLayerBuilder {
         ))
     }
 
-    pub fn apply_delta(&self, delta: &StoreLayer) -> Result<(), io::Error> {
-        /*
+    pub async fn apply_delta(&self, delta: &StoreLayer) -> Result<(), io::Error> {
         // create a child builder and use it directly
         // first check what dictionary entries we don't know about, add those
+        let triple_additions = delta.triple_additions().await?;
+        let triple_removals = delta.triple_removals().await?;
         rayon::join(
-            || {
-                delta.triple_additions().par_bridge().for_each(|t| {
+            move || {
+                triple_additions.par_bridge().for_each(|t| {
                     delta
                         .id_triple_to_string(&t)
                         .map(|st| self.add_string_triple(st));
                 });
             },
-            || {
-                delta.triple_removals().par_bridge().for_each(|t| {
+            move || {
+                triple_removals.par_bridge().for_each(|t| {
                     delta
                         .id_triple_to_string(&t)
                         .map(|st| self.remove_string_triple(st));
@@ -171,12 +172,9 @@ impl StoreLayerBuilder {
         );
 
         Ok(())
-        */
-        todo!();
     }
 
     pub fn apply_diff(&self, other: &StoreLayer) -> Result<(), io::Error> {
-        /*
         // create a child builder and use it directly
         // first check what dictionary entries we don't know about, add those
         rayon::join(
@@ -207,8 +205,6 @@ impl StoreLayerBuilder {
         );
 
         Ok(())
-         */
-        todo!();
     }
 }
 

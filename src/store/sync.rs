@@ -88,7 +88,7 @@ impl SyncStoreLayerBuilder {
     }
 
     pub fn apply_delta(&self, delta: &SyncStoreLayer) -> Result<(), io::Error> {
-        self.inner.apply_delta(&delta.inner)
+        task_sync(self.inner.apply_delta(&delta.inner))
     }
 
     pub fn apply_diff(&self, other: &SyncStoreLayer) -> Result<(), io::Error> {
